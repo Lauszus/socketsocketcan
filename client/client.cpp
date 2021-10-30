@@ -436,7 +436,7 @@ void* read_poll_tcp(void* args)
         {
             if (errno == ENOBUFS)
             {
-                pthread_error("no buffer space available on CAN socket", errno);
+                pthread_error("no buffer space available on TCP socket", errno);
             }
             else
             {
