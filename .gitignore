@@ -121,3 +121,7 @@ dmypy.json
 
 # PyCharm
 .idea/
+
+# Executables
+client/client
+client/server

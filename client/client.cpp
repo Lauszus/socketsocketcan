@@ -1,29 +1,48 @@
-/*
-TODO: error frames aren't being looped back
-*/
+/* MIT License
+ *
+ * Copyright (c) 2019 Thomas Bruen
+ * Copyright (c) 2019-2022 Kristian Sloth Lauszus
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
-#include <stdio.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <math.h>
 #include <cerrno>
-
-#include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
-#include <net/if.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <linux/sockios.h>
-#include <sys/time.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <math.h>
+#include <net/if.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <unordered_map>
 
 #define BUF_SZ 100000
@@ -34,7 +53,7 @@ TODO: error frames aren't being looped back
 #endif
 
 #ifndef RECV_OWN_MSGS
-#define RECV_OWN_MSGS 1 // If 1, we well receive messages we sent. useful for logging.
+#define RECV_OWN_MSGS 0 // If 1, we well receive messages we sent. useful for logging.
 #endif
 
 const int LOOPBACK = RECV_OWN_MSGS;
@@ -43,7 +62,16 @@ const int LOOPBACK = RECV_OWN_MSGS;
 #define WAIT_FOR_TCP_CONNECTION 0
 #endif
 
+#ifndef CLIENT_MODE
+#define CLIENT_MODE 1
+#endif
+
+#ifndef CAN_FORWARDER_MODE
+#define CAN_FORWARDER_MODE 0
+#endif
+
 /* DEFINITIONS */
+#if !CAN_FORWARDER_MODE
 typedef struct __attribute__((packed, aligned(1)))
 {
     time_t tv_sec;
@@ -52,6 +80,7 @@ typedef struct __attribute__((packed, aligned(1)))
     uint8_t dlc;
     uint8_t data[CAN_MAX_DLEN];
 } timestamped_frame;
+#endif
 
 typedef struct
 {
@@ -89,8 +118,11 @@ int create_tcp_socket(const char* hostname, int port);
 int open_can_socket(const char *port, const struct can_filter *filter, int numfilter);
 
 // read a single CAN frame and add timestamp
-// int read_frame(int soc,timestamped_frame* tf);
-int read_frame(int soc,struct can_frame* frame,struct timeval* tv);
+#if CAN_FORWARDER_MODE
+int read_frame(int soc, struct can_frame* frame);
+#else
+int read_frame(int soc, struct can_frame* frame, struct timeval* tv);
+#endif
 
 // continually read CAN and add to buffer
 void* read_poll_can(void *args);
@@ -102,10 +134,18 @@ void* read_poll_tcp(void *args);
 void* write_poll(void *args);
 
 // convert bytes back to timestamped_can
-void deserialize_frame(const char* ptr, timestamped_frame* tf);
+#if CAN_FORWARDER_MODE
+void deserialize_frame(const uint8_t* ptr, struct can_frame* frame);
+#else
+void deserialize_frame(const uint8_t* ptr, timestamped_frame* tf);
+#endif
 
 // print CAN frame into to stdout (for debug)
+#if CAN_FORWARDER_MODE
+void print_frame(const struct can_frame* frame);
+#else
 void print_frame(const timestamped_frame* tf);
+#endif
 
 /* GLOBALS */
 pthread_mutex_t read_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -115,11 +155,13 @@ size_t socketcan_bytes_available = 0;// only access inside of mutex
 
 pthread_cond_t tcp_send_copied; //signal to enable thread.
 
-char read_buf_can[BUF_SZ]; // where serialized CAN frames are dumped
-char read_buf_tcp[BUF_SZ]; // where serialized CAN frames are copied to and sent to the server
+uint8_t read_buf_can[BUF_SZ]; // where serialized CAN frames are dumped
+uint8_t read_buf_tcp[BUF_SZ]; // where serialized CAN frames are copied to and sent to the server
 
 /* FUNCTIONS */
-void handle_signal(int signal) {
+void handle_signal(int signal)
+{
+    (void)signal;
     poll = false;
 }
 
@@ -141,36 +183,37 @@ int create_tcp_socket(const char* hostname, int port)
 {
     struct sockaddr_in serv_addr;
     struct hostent *server;
-    int fd;
-
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0)
-    {
-        error("ERROR opening socket", errno);
-    }
-
-    // Enable 1s timeout, so the thread is not blocking
     struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0)
-    {
-        error("ERROR setting timeout", errno);
-    }
+    int client_fd;
 
+    // Get the server address from the provided hostname
     server = gethostbyname(hostname);
     if (server == NULL)
     {
         error("ERROR, no such host", h_errno);
     }
-    bzero((char *)&serv_addr, sizeof(serv_addr));
+    bzero(&serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr,
-          (char *)&serv_addr.sin_addr.s_addr,
-          server->h_length);
+    bcopy(server->h_addr, &serv_addr.sin_addr.s_addr, server->h_length);
     serv_addr.sin_port = htons(port);
 
-    if (connect(fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+#if CLIENT_MODE
+    // If in client mode we create a socket and connect to the server
+    client_fd = socket(AF_INET, SOCK_STREAM, 0); // TCP socket
+    if (client_fd < 0)
+    {
+        error("ERROR opening socket", errno);
+    }
+
+    // Enable 1s timeout, so the thread is not blocking
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) < 0)
+    {
+        error("ERROR setting timeout", errno);
+    }
+
+    if (connect(client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
 #if WAIT_FOR_TCP_CONNECTION
         return -1;
@@ -178,11 +221,73 @@ int create_tcp_socket(const char* hostname, int port)
         error("ERROR connecting", errno);
 #endif
     }
+#else
+    // If in server mode we bind to the provided hostname and port and wait for a client to connect
+    struct sockaddr_in peer_addr;
+    int server_fd;
+    socklen_t peer_addr_size;
 
-    return fd;
+    server_fd = socket(AF_INET, SOCK_STREAM, 0); // TCP socket
+    if (server_fd < 0)
+    {
+        error("ERROR opening socket", errno);
+    }
+
+    // Re-use the address to prevent "Address already in use" error
+    const int reuseaddr = 1;
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr)) < 0)
+    {
+        error("ERROR setting reuseaddr", errno);
+    }
+
+    if (bind(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        error("ERROR bind", errno);
+    }
+
+    if (listen(server_fd, 1) < 0)
+    {
+        error("ERROR listen", errno);
+    }
+
+    // Enable 1s timeout, so the accept is not blocking
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    if (setsockopt(server_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        error("ERROR setting timeout", errno);
+    }
+
+    // TODO: Remove this ugly hack
+retry:
+    if (!poll)
+    {
+        return -1;
+    }
+
+    peer_addr_size = sizeof(peer_addr);
+    client_fd = accept(server_fd, (struct sockaddr*)&peer_addr, &peer_addr_size);
+    if (client_fd < 0)
+    {
+        goto retry;
+        //error("ERROR accept", errno);
+    }
+
+    // Enable 1s timeout, so the thread is not blocking
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const uint8_t*)&tv, sizeof tv) < 0)
+    {
+        error("ERROR setting client timeout", errno);
+    }
+
+    // TODO: Close server socket on exit
+#endif
+
+    return client_fd;
 }
 
-int open_can_socket(const char *port, const struct can_filter *p_filter, int numfilter)
+int open_can_socket(const char *can_interface_name, const struct can_filter *p_filter, int numfilter)
 {
     struct ifreq ifr;
     struct sockaddr_can addr;
@@ -205,7 +310,7 @@ int open_can_socket(const char *port, const struct can_filter *p_filter, int num
     struct timeval tv;
     tv.tv_sec = 1;
     tv.tv_usec = 0;
-    if (setsockopt(soc, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0)
+    if (setsockopt(soc, SOL_SOCKET, SO_RCVTIMEO, (const uint8_t*)&tv, sizeof(tv)) < 0)
     {
         error("ERROR setting timeout", errno);
     }
@@ -235,7 +340,7 @@ int open_can_socket(const char *port, const struct can_filter *p_filter, int num
     }
 
     addr.can_family = AF_CAN;
-    strcpy(ifr.ifr_name, port);
+    strcpy(ifr.ifr_name, can_interface_name);
     if (ioctl(soc, SIOCGIFINDEX, &ifr) < 0)
     {
         error("ERROR failed to set ioctl", errno);
@@ -250,13 +355,18 @@ int open_can_socket(const char *port, const struct can_filter *p_filter, int num
     return soc;
 }
 
-int read_frame(int soc,struct can_frame* frame,struct timeval* tv)
+#if CAN_FORWARDER_MODE
+int read_frame(int soc, struct can_frame* frame)
+#else
+int read_frame(int soc, struct can_frame* frame, struct timeval* tv)
+#endif
 {
-    //TODO: is it worth doing this, or just pass timeval as a separate argument
     int bytes;
 
-    bytes = read(soc,frame,sizeof(*frame));
+    bytes = read(soc, frame, sizeof(*frame));
+#if !CAN_FORWARDER_MODE
     ioctl(soc, SIOCGSTAMP, tv);
+#endif
 
     return bytes;
 }
@@ -267,30 +377,40 @@ void* read_poll_can(void* args)
     printf("read_poll_can started\n");
 #endif
 
-    can_read_args* read_args = (can_read_args*)args;
+    const can_read_args* read_args = (const can_read_args*)args;
     int fd = read_args->can_sock;
     bool use_unordered_map = read_args->use_unordered_map;
 
-    timestamped_frame tf;
     struct can_frame frame;
+#if CAN_FORWARDER_MODE
+    std::unordered_map<canid_t, struct can_frame> hash_map;
+    size_t hash_map_value_size = sizeof(struct can_frame);
+    const size_t frame_sz = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(frame.data);
+#else
+    std::unordered_map<canid_t, timestamped_frame> hash_map;
+    size_t hash_map_value_size = sizeof(timestamped_frame);
+    timestamped_frame tf;
+    const size_t frame_sz = sizeof(tf);
     struct timeval tv;
+#endif
 
     size_t count = 0;
-    char* bufpnt = read_buf_can;
-    const size_t frame_sz = sizeof(tf);
-
-    std::unordered_map<canid_t, timestamped_frame> hash_map;
+    uint8_t* bufpnt = read_buf_can;
 
     while (poll)
     {
-        if (count > (BUF_SZ-frame_sz))
+        if (count > (BUF_SZ - frame_sz))
         {
-            //full buffer, drop data and start over. TODO: ring buffer, print/ debug
+            //full buffer, drop data and start over. TODO: ring buffer, print/debug
             bufpnt = read_buf_can;
             count = 0;
         }
 
+#if CAN_FORWARDER_MODE
+        int num_bytes_can = read_frame(fd, &frame);
+#else
         int num_bytes_can = read_frame(fd, &frame, &tv);
+#endif
         if (num_bytes_can == -1)
         {
             // This happens when there is a timeout, we simply keep looping, as we want do not want to block while
@@ -304,45 +424,59 @@ void* read_poll_can(void* args)
             pthread_error("Socket closed at other end... exiting", 0);
         }
 
+#if DEBUG
+        printf("read %d number of bytes\n", num_bytes_can);
+        print_frame(&frame);
+#endif
+
         if (use_unordered_map)
         {
+#if CAN_FORWARDER_MODE
+            hash_map[frame.can_id] = frame;
+#else
             tf.tv_sec = tv.tv_sec;
             tf.tv_usec = tv.tv_usec;
             tf.id = frame.can_id;
             tf.dlc = frame.can_dlc;
             memcpy(tf.data, frame.data, sizeof(frame.data));
             hash_map[tf.id] = tf;
+#endif
         }
         else
         {
-            memcpy(bufpnt,(char*)(&tv),sizeof(struct timeval));
+#if !CAN_FORWARDER_MODE
+            memcpy(bufpnt, (uint8_t*)&tv, sizeof(struct timeval));
             bufpnt += sizeof(struct timeval);
             count += sizeof(struct timeval);
-            memcpy(bufpnt,(char*)(&frame.can_id),sizeof(uint32_t));
+#endif
+
+            memcpy(bufpnt, (uint8_t*)&frame.can_id, sizeof(uint32_t));
             bufpnt += sizeof(uint32_t);
             count += sizeof(uint32_t);
-            memcpy(bufpnt,&(frame.can_dlc),sizeof(uint8_t));
+
+            memcpy(bufpnt, (uint8_t*)&frame.can_dlc,sizeof(uint8_t));
             bufpnt += sizeof(uint8_t);
             count += sizeof(uint8_t);
 
-            memcpy(bufpnt,(char*)(&frame.data),sizeof(frame.data));
+            memcpy(bufpnt, (uint8_t*)&frame.data, sizeof(frame.data));
             bufpnt += sizeof(frame.data);
             count += sizeof(frame.data);
         }
 
 #if DEBUG
-        printf("message read\n");
+        printf("message read: %zu\n", count);
 #endif
         pthread_mutex_lock(&read_mutex);
         if (tcp_ready_to_send) // other thread has said it is able to write to TCP socket
         {
             if (use_unordered_map)
             {
-                socketcan_bytes_available = hash_map.size() * sizeof(tf);
+                socketcan_bytes_available = hash_map.size() * hash_map_value_size;
                 size_t i = 0;
-                for (const auto &n : hash_map) {
-                    memcpy(read_buf_tcp + i, &n.second, sizeof(tf));
-                    i += sizeof(tf);
+                for (const auto &n : hash_map)
+                {
+                    memcpy(read_buf_tcp + i, (uint8_t*)&n.second, hash_map_value_size);
+                    i += hash_map_value_size;
                 }
 
                 tcp_ready_to_send = false;
@@ -354,7 +488,7 @@ void* read_poll_can(void* args)
                 }
 
 #if DEBUG
-                printf("%zu bytes copied to TCP buffer.\n", socketcan_bytes_available);
+                printf("%zu bytes copied to TCP buffer\n", socketcan_bytes_available);
 #endif
                 hash_map.clear();
             }
@@ -398,7 +532,7 @@ void* read_poll_tcp(void* args)
     printf("read_poll_tcp started\n");
 #endif
 
-    tcp_read_args* read_args = (tcp_read_args*)args;
+    const tcp_read_args* read_args = (const tcp_read_args*)args;
     int tcp_socket = read_args->tcp_sock;
     int limit_recv_rate_hz = read_args->limit_recv_rate_hz;
 
@@ -431,7 +565,7 @@ void* read_poll_tcp(void* args)
 #if DEBUG
         printf("ready to send %zu bytes\n", cpy_socketcan_bytes_available);
 #endif
-        int n = write(tcp_socket, read_buf_tcp,cpy_socketcan_bytes_available);
+        int n = write(tcp_socket, read_buf_tcp, cpy_socketcan_bytes_available);
         if (n < 0)
         {
             if (errno == ENOBUFS)
@@ -448,11 +582,16 @@ void* read_poll_tcp(void* args)
             fprintf(stderr, "only send %d bytes of TCP message.\n", n);
             pthread_error("failed to sent all bytes over TCP socket", EXIT_FAILURE);
         }
+
 #if DEBUG
         printf("%d bytes written to TCP\n",n);
-        timestamped_frame tf;
-        deserialize_frame(read_buf_tcp,&tf); //TODO: more than one frame.
-        print_frame(&tf);
+#if CAN_FORWARDER_MODE
+        struct can_frame frame;
+#else
+        timestamped_frame frame;
+#endif
+        deserialize_frame(read_buf_tcp, &frame); //TODO: more than one frame.
+        print_frame(&frame);
 #endif
 
         if (limit_recv_rate_hz > 0)
@@ -479,21 +618,21 @@ void* write_poll(void* args)
 #endif
 
     // CAN write should be quick enough to do in this loop...
-    can_write_sockets* socks = (can_write_sockets*)args;
+    const can_write_sockets* socks = (const can_write_sockets*)args;
     struct can_frame frame;
 
-    char write_buf[BUF_SZ];
-    char* bufpnt = write_buf;
-    const size_t frame_sz = 13; // 4 id + 1 dlc + 8 bytes
+    uint8_t write_buf[BUF_SZ];
+    uint8_t* bufpnt = write_buf;
     const size_t can_struct_sz = sizeof(struct can_frame);
+    const size_t frame_sz = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(frame.data);
 
     while (poll)
     {
-        int num_bytes_tcp = read(socks->tcp_sock,write_buf,BUF_SZ);
+        int num_bytes_tcp = read(socks->tcp_sock, write_buf, BUF_SZ);
         if (num_bytes_tcp == -1)
         {
             // This happens when there is a timeout, we simply keep looping, as we want do not want to block while
-            // reading the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
+            // writing to the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
             // on the bus
             continue;
         }
@@ -502,23 +641,35 @@ void* write_poll(void* args)
             // This will happen when we shut down the client, so report an success
             pthread_error("Socket closed at other end... exiting", 0);
         }
-#if DEBUG
-        printf("%d bytes read from TCP.\n", num_bytes_tcp);
-#endif
-        int num_frames = num_bytes_tcp / frame_sz;
 
-        for(int n = 0;n < num_frames;n++)
-        {
-            frame.can_id = ((uint32_t)(*bufpnt) << 0) | ((uint32_t)(*(bufpnt+1)) << 8) | ((uint32_t)(*(bufpnt+2)) << 16) | ((uint32_t)(*(bufpnt+3)) << 24);
-            frame.can_dlc = (uint8_t)(*(bufpnt+4));
-            memcpy(frame.data,bufpnt+5,frame.can_dlc);
+        int num_frames = num_bytes_tcp / frame_sz;
 #if DEBUG
-            printf("frame %d | ID: %x | DLC: %u | Data:",n,frame.can_id,frame.can_dlc);
-            for (int m = 0;m < frame.can_dlc;m++)
+        printf("%d bytes read from TCP. Number of frames: %d\n", num_bytes_tcp, num_frames);
+#endif
+        size_t frame_remainder = num_bytes_tcp % frame_sz;
+        if (frame_remainder != 0)
+        {
+            fprintf(stderr, "Frames got corrupted, as remainder is not 0: %zu\n", frame_remainder);
+            continue;
+        }
+
+        for (int n = 0; n < num_frames; n++)
+        {
+            frame.can_id = ((uint32_t)bufpnt[0]) | ((uint32_t)bufpnt[1] << 8) | ((uint32_t)bufpnt[2] << 16) | ((uint32_t)bufpnt[3] << 24);
+            frame.can_dlc = (uint8_t)bufpnt[4];
+            memcpy(frame.data, &bufpnt[5], frame.can_dlc);
+
+#if DEBUG
+#if CAN_FORWARDER_MODE
+            print_frame(&frame);
+#else
+            printf("frame %d | ID: %x | DLC: %u | Data:", n, frame.can_id, frame.can_dlc);
+            for (int m = 0; m < frame.can_dlc; m++)
             {
-                printf("%02x ",frame.data[m]);
+                printf(" %02x",frame.data[m]);
             }
             printf("\n");
+#endif
 #endif
             int num_bytes_can = write(socks->can_sock, &frame, can_struct_sz);
             if (num_bytes_can < 0)
@@ -549,36 +700,87 @@ void* write_poll(void* args)
     pthread_exit(NULL);
 }
 
-void deserialize_frame(const char* ptr, timestamped_frame* tf)
+#if CAN_FORWARDER_MODE
+void deserialize_frame(const uint8_t* ptr, struct can_frame* frame)
+#else
+void deserialize_frame(const uint8_t* ptr, timestamped_frame* tf)
+#endif
 {
-    // tf = (timestamped_frame*)ptr; // doesn't work, struct does some padding. manually populate fields?
     size_t count = 0;
-    memcpy(&(tf -> tv_sec),ptr,sizeof(time_t));
-    count += sizeof(time_t);
-
-    memcpy(&(tf -> tv_usec),ptr+count,sizeof(suseconds_t));
-    count += sizeof(suseconds_t);
-
-    memcpy(&(tf -> id),ptr+count,sizeof(canid_t));
+#if CAN_FORWARDER_MODE
+    memcpy(&frame->can_id, ptr + count, sizeof(canid_t));
     count+= sizeof(canid_t);
 
-    memcpy(&(tf -> dlc),ptr+count,sizeof(uint8_t));
+    memcpy(&frame->can_dlc, ptr + count, sizeof(uint8_t));
     count += sizeof(uint8_t);
 
-    memcpy(tf ->data,ptr+count,tf -> dlc);
+    memcpy(frame->data, ptr + count, frame->can_dlc);
+#else
+    // tf = (timestamped_frame*)ptr; // doesn't work, struct does some padding. manually populate fields?
+    memcpy(&tf->tv_sec, ptr, sizeof(time_t));
+    count += sizeof(time_t);
+
+    memcpy(&tf->tv_usec, ptr + count, sizeof(suseconds_t));
+    count += sizeof(suseconds_t);
+
+    memcpy(&tf->id, ptr + count, sizeof(canid_t));
+    count+= sizeof(canid_t);
+
+    memcpy(&tf->dlc, ptr + count, sizeof(uint8_t));
+    count += sizeof(uint8_t);
+
+    memcpy(tf->data, ptr + count, tf->dlc);
+#endif
 }
 
+#if CAN_FORWARDER_MODE
+void print_frame(const struct can_frame* frame)
+#else
 void print_frame(const timestamped_frame* tf)
+#endif
 {
-    printf("\t%ld.%ld: ID %x | DLC %u | Data: ",tf->tv_sec,tf->tv_usec,tf->id,tf->dlc);
-    for (int n=0;n<tf->dlc;n++)
+#if CAN_FORWARDER_MODE
+    bool is_extended = frame->can_id & CAN_EFF_FLAG;
+    bool is_error_frame = frame->can_id & CAN_ERR_FLAG;
+    bool is_remote_frame = frame->can_id & CAN_RTR_FLAG;
+
+    uint32_t arbitration_id;
+    if (is_extended)
     {
-        printf("%02x ",tf->data[n]);
+        arbitration_id = frame->can_id & CAN_EFF_MASK;
     }
+    else
+    {
+        arbitration_id = frame->can_id & CAN_SFF_MASK;
+    }
+
+    if (is_error_frame)
+    {
+        printf("ERROR FRAME | ");
+    }
+
+    if (is_remote_frame)
+    {
+        printf("Remote frame | ");
+    }
+
+    const uint8_t max_id_length = is_extended ? 3 : 8;
+    printf("ID: 0x%0*X | DLC: %u | Data:", max_id_length, arbitration_id, frame->can_dlc);
+    for (int n = 0; n < frame->can_dlc; n++)
+    {
+        printf(" %02x", frame->data[n]);
+    }
+#else
+    printf("\t%ld.%ld: ID: 0x%x | DLC: %u | Data:", tf->tv_sec, tf->tv_usec,tf->id, tf->dlc);
+    for (int n=0; n<tf->dlc; n++)
+    {
+        printf(" %02x", tf->data[n]);
+    }
+#endif
     printf("\n");
 }
 
-int tcpclient(const char *can_port, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, int limit_recv_rate_hz)
+int tcpclient(const char *can_interface_name, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, int limit_recv_rate_hz)
 {
 #if DEBUG
     printf("tcpclient started\n");
@@ -597,7 +799,7 @@ int tcpclient(const char *can_port, const char *hostname, int port, const struct
         error("mutex init has failed", thread_rv);
     }
 
-    can_socket = open_can_socket(can_port, filter, numfilter);
+    can_socket = open_can_socket(can_interface_name, filter, numfilter);
     if (can_socket < 0)
     {
         error("unable to create read can thread", can_socket);
@@ -650,19 +852,19 @@ int tcpclient(const char *can_port, const char *hostname, int port, const struct
         error("unable to create write thread", thread_rv);
     }
 
-    thread_rv = pthread_join(read_can_thread,NULL);
+    thread_rv = pthread_join(read_can_thread, NULL);
     if (thread_rv < 0)
     {
         error("read can thread failed", thread_rv);
     }
 
-    thread_rv = pthread_join(read_tcp_thread,NULL);
+    thread_rv = pthread_join(read_tcp_thread, NULL);
     if (thread_rv < 0)
     {
         error("read tcp thread failed", thread_rv);
     }
 
-    thread_rv = pthread_join(write_thread,NULL);
+    thread_rv = pthread_join(write_thread, NULL);
     if (thread_rv < 0)
     {
         error("write thread failed", thread_rv);
@@ -684,9 +886,9 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
-    char *can_port = argv[1];
+    char *can_interface_name = argv[1];
     char *hostname = argv[2];
     int port = atoi(argv[3]);
 
-    return tcpclient(can_port, hostname, port, NULL, 0, false, -1);
+    return tcpclient(can_interface_name, hostname, port, NULL, 0, false, -1);
 }
