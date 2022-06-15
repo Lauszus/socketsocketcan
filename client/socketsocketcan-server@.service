@@ -1,0 +1,17 @@
+[Unit]
+Description=socketsocketcan server %I
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+Environment=PATH_SOCKETSOCKETCAN_CLIENT_DIR=/home/pi/socketsocketcan/client
+ExecStartPre=/usr/bin/make -C $PATH_SOCKETSOCKETCAN_CLIENT_DIR -B CAN_FORWARDER_MODE=1 CLIENT_MODE=0
+ExecStart=/bin/sh -c '$$PATH_SOCKETSOCKETCAN_CLIENT_DIR/server %I'
+Restart=always
+RestartSec=1
+TimeoutStopSec=2
+Type=simple
+
+[Install]
+WantedBy=multi-user.target

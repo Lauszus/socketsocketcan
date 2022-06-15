@@ -1,7 +1,7 @@
 # SocketCAN over TCP
 
 #### Original author Thomas Bruen
-#### Modified by Kristian Lauszus, 2019-2021
+#### Modified by Kristian Lauszus, 2019-2022
 _________
 
 [![](https://github.com/Lauszus/socketsocketcan/workflows/socketsocketcan%20CI/badge.svg)](https://github.com/Lauszus/socketsocketcan/actions?query=branch%3Amaster)
@@ -30,12 +30,13 @@ sudo ip link set can0 up type can bitrate 1000000
 ```
 
 # Installation
+
 ## Client
+
 Copy the `client` folder to your Linux device and run `make`
 
-By default the client is set to receive the message you've sent (personally I've found this really useful for logging because the timestamps are aligned), but you can disable it in `client.c`: `#define RECV_OWN_MSGS 0`
-
 ## Server
+
 Using a virtual environment is really recommended here.
 
 ```bash
@@ -52,6 +53,7 @@ As the quotes above impied, calling `send()` doesn't actually send the message. 
 The client has a similar structure: there is one thread to poll the CAN bus for new messages and put them in a buffer, a second thread to copy from that buffer to the TCP socket, and a third to read from the TCP socket and send the messages via the CAN Bus.
 
 ## Client
+
 `./client CANCHANNEL HOSTNAME PORT`
 e.g. `./client vcan0 my-can-server 5000`
 
@@ -65,3 +67,30 @@ bus.send(Message(arbitration_id=0x100,data=list(range(5))))
 print(bus.recv()) #this will be the message you just send (unless)
 ```
 
+# Forwarder
+
+You can also use this to forward a socketcan socket to another machine via TCP. Fx to forward `can0` to `vcan0` from a server with IP address `192.168.4.1` to a client:
+
+### Server
+
+```bash
+sudo cp socketsocketcan-server@.service /etc/systemd/system/
+sudo chmod 644 /etc/systemd/system/socketsocketcan-server@.service
+sudo systemctl daemon-reload
+
+sudo systemctl enable "$(systemd-escape --template socketsocketcan-server@.service "can0 0.0.0.0 8000")"
+sudo systemctl start "$(systemd-escape --template socketsocketcan-server@.service "can0 0.0.0.0 8000")"
+```
+
+### Client
+
+```bash
+sudo cp socketsocketcan-client@.service /etc/systemd/system/
+sudo chmod 644 /etc/systemd/system/socketsocketcan-client@.service
+sudo systemctl daemon-reload
+
+sudo systemctl enable "$(systemd-escape --template socketsocketcan-client@.service "vcan0 192.168.4.1 8000")"
+sudo systemctl start "$(systemd-escape --template socketsocketcan-client@.service "vcan0 192.168.4.1 8000")"
+```
+
+Note you might need to change the `User` and `PATH_SOCKETSOCKETCAN_CLIENT_DIR` in `socketsocketcan-server@.service` and `socketsocketcan-client@.service` files.
