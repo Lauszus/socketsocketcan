@@ -10,7 +10,7 @@ jobs:
       matrix:
         docker_images: ['balenalib/armv7hf-debian:stretch', 'balenalib/armv7hf-debian:buster', 'balenalib/armv7hf-debian:bullseye']
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Build ${{ matrix.docker_images }} wheel
       run: |
         docker build -f Dockerfile.armv7l -t lauszus/socketsocketcan --build-arg APP_IMAGE="${{ matrix.docker_images }}" .
@@ -18,7 +18,7 @@ jobs:
         mkdir dist
         cp socketsocketcan-wheel/socketsocketcan*.whl dist/
     - name: Upload wheel as artifact
-      uses: actions/upload-artifact@v1
+      uses: actions/upload-artifact@v3
       with:
         name: socketsocketcan-${{ github.sha }}
         path: dist
@@ -29,7 +29,7 @@ jobs:
       matrix:
         python-version: ['3.5', '3.6', '3.7', '3.8', '3.9', '3.10']
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
@@ -48,7 +48,7 @@ jobs:
         mkdir dist
         cp socketsocketcan-wheel/socketsocketcan*.whl dist/
     - name: Upload wheel as artifact
-      uses: actions/upload-artifact@v1
+      uses: actions/upload-artifact@v3
       with:
         name: socketsocketcan-${{ github.sha }}
         path: dist
@@ -56,7 +56,7 @@ jobs:
     name: Build sdist
     runs-on: ubuntu-20.04
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python 3.10
       uses: actions/setup-python@v4
       with:
@@ -66,7 +66,7 @@ jobs:
     - name: Build sdist
       run: python3 setup.py sdist --formats=gztar,zip
     - name: Upload sdist as artifact
-      uses: actions/upload-artifact@v1
+      uses: actions/upload-artifact@v3
       with:
         name: socketsocketcan-${{ github.sha }}
         path: dist
@@ -79,7 +79,7 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    - uses: actions/download-artifact@v1
+    - uses: actions/download-artifact@v3
       with:
         name: socketsocketcan-${{ github.sha }}
         path: socketsocketcan
