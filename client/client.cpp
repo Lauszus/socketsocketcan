@@ -62,7 +62,7 @@ typedef struct
 typedef struct
 {
     int tcp_sock;
-    int limit_recv_rate_hz;
+    float limit_recv_rate_hz;
 } tcp_read_args; // used to supply multiple thread args.
 
 typedef struct
@@ -400,7 +400,7 @@ void* read_poll_tcp(void* args)
 
     tcp_read_args* read_args = (tcp_read_args*)args;
     int tcp_socket = read_args->tcp_sock;
-    int limit_recv_rate_hz = read_args->limit_recv_rate_hz;
+    float limit_recv_rate_hz = read_args->limit_recv_rate_hz;
 
     size_t cpy_socketcan_bytes_available;
     int wait_rv = 0;
@@ -458,7 +458,7 @@ void* read_poll_tcp(void* args)
         if (limit_recv_rate_hz > 0)
         {
             struct timespec ts;
-            int milliseconds = (int)roundf(1000.0f / (float)limit_recv_rate_hz);
+            int milliseconds = (int)roundf(1000.0f / limit_recv_rate_hz);
             ts.tv_sec = milliseconds / 1000;
             ts.tv_nsec = (milliseconds % 1000) * 1000000;
             nanosleep(&ts, NULL);
@@ -578,7 +578,7 @@ void print_frame(const timestamped_frame* tf)
     printf("\n");
 }
 
-int tcpclient(const char *can_port, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, int limit_recv_rate_hz)
+int tcpclient(const char *can_port, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, float limit_recv_rate_hz)
 {
 #if DEBUG
     printf("tcpclient started\n");
@@ -629,18 +629,27 @@ int tcpclient(const char *can_port, const char *hostname, int port, const struct
     tcp_socket = create_tcp_socket(hostname, port);
 #endif
 
-    can_read_args read_args_can = { can_socket, use_unordered_map };
-    thread_rv = pthread_create(&read_can_thread, NULL, read_poll_can, (void*)&read_args_can);
-    if (thread_rv < 0)
+    if (limit_recv_rate_hz == 0)
     {
-        error("unable to create read can thread", thread_rv);
+#if DEBUG
+        printf("Not creating reading threads, as limit_recv_rate_hz == 0\n");
+#endif
     }
-
-    tcp_read_args read_args_tcp = { tcp_socket, limit_recv_rate_hz };
-    thread_rv = pthread_create(&read_tcp_thread, NULL, read_poll_tcp, (void*)&read_args_tcp);
-    if (thread_rv < 0)
+    else
     {
-        error("unable to create read tcp thread", thread_rv);
+        can_read_args read_args_can = { can_socket, use_unordered_map };
+        thread_rv = pthread_create(&read_can_thread, NULL, read_poll_can, (void*)&read_args_can);
+        if (thread_rv < 0)
+        {
+            error("unable to create read can thread", thread_rv);
+        }
+
+        tcp_read_args read_args_tcp = { tcp_socket, limit_recv_rate_hz };
+        thread_rv = pthread_create(&read_tcp_thread, NULL, read_poll_tcp, (void*)&read_args_tcp);
+        if (thread_rv < 0)
+        {
+            error("unable to create read tcp thread", thread_rv);
+        }
     }
 
     can_write_sockets write_args = { tcp_socket, can_socket };
@@ -650,16 +659,19 @@ int tcpclient(const char *can_port, const char *hostname, int port, const struct
         error("unable to create write thread", thread_rv);
     }
 
-    thread_rv = pthread_join(read_can_thread,NULL);
-    if (thread_rv < 0)
+    if (limit_recv_rate_hz != 0)
     {
-        error("read can thread failed", thread_rv);
-    }
+        thread_rv = pthread_join(read_can_thread,NULL);
+        if (thread_rv < 0)
+        {
+            error("read can thread failed", thread_rv);
+        }
 
-    thread_rv = pthread_join(read_tcp_thread,NULL);
-    if (thread_rv < 0)
-    {
-        error("read tcp thread failed", thread_rv);
+        thread_rv = pthread_join(read_tcp_thread,NULL);
+        if (thread_rv < 0)
+        {
+            error("read tcp thread failed", thread_rv);
+        }
     }
 
     thread_rv = pthread_join(write_thread,NULL);

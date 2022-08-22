@@ -10,7 +10,7 @@ from tcpclient import tcpclient
 class TCPClient(object):
 
     def __init__(self, channel: str, hostname: str, port: int, can_filters: List[Dict[str, Union[int, bool]]] = None,
-                 use_unordered_map=False, limit_recv_rate_hz: int = None):
+                 use_unordered_map=False, limit_recv_rate_hz: float = None):
         """
         :param channel: Can interface to use.
         :param hostname: Hostname used for the socket.
@@ -19,7 +19,8 @@ class TCPClient(object):
         :param use_unordered_map: Override the any old frames if a new one is received before the server has had time
         to read it yet. This can be used together with "limit_recv_rate_hz" to limit the update rate while still
         receiving the latest data.
-        :param limit_recv_rate_hz: Allow to limit the receive update rate.
+        :param limit_recv_rate_hz: Allow to limit the receive update rate. Can be set to 0 to disable receiving
+        completely.
         """
         self.channel = channel
         self.hostname = hostname
