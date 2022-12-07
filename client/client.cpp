@@ -31,6 +31,7 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -205,6 +206,18 @@ int create_tcp_socket(const char* hostname, int port)
         error("ERROR opening socket", errno);
     }
 
+    // Disable Nagle's algorithm, so the CAN messages are not grouped together into one TCP packet
+    int flag = 1;
+    int result = setsockopt(client_fd,    /* socket affected */
+                            IPPROTO_TCP,  /* set option at TCP level */
+                            TCP_NODELAY,  /* name of option */
+                            &flag,        /* the cast is historical cruft */
+                            sizeof(int)); /* length of option value */
+    if (result < 0)
+    {
+        error("ERROR setting TCP_NODELAY", errno);
+    }
+
     // Enable 1s timeout, so the thread is not blocking
     tv.tv_sec = 1;
     tv.tv_usec = 0;
@@ -231,6 +244,18 @@ int create_tcp_socket(const char* hostname, int port)
     if (server_fd < 0)
     {
         error("ERROR opening socket", errno);
+    }
+
+    // Disable Nagle's algorithm, so the CAN messages are not grouped together into one TCP packet
+    int flag = 1;
+    int result = setsockopt(server_fd,    /* socket affected */
+                            IPPROTO_TCP,  /* set option at TCP level */
+                            TCP_NODELAY,  /* name of option */
+                            &flag,        /* the cast is historical cruft */
+                            sizeof(int)); /* length of option value */
+    if (result < 0)
+    {
+        error("ERROR setting TCP_NODELAY", errno);
     }
 
     // Re-use the address to prevent "Address already in use" error

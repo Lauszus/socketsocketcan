@@ -15,6 +15,9 @@ endif
 
 CAN_FORWARDER_MODE ?= 0
 CXXFLAGS += -DCAN_FORWARDER_MODE=$(CAN_FORWARDER_MODE)
+ifeq ($(CAN_FORWARDER_MODE),1)
+    EXECUTABLE_NAME := $(addsuffix _forwarder,$(EXECUTABLE_NAME))
+endif
 
 # Check if the DEBUG environment variable is set.
 DEBUG ?= 0
@@ -36,4 +39,4 @@ $(EXECUTABLE_NAME): $(TARGET).cpp
 	$(CXX) $(<) -o $(EXECUTABLE_NAME) $(CXXFLAGS) $(LFLAGS)
 
 clean:
-	$(RM) *.o *~ client server
+	$(RM) *.o *~ client client_forwarder client server server_forwarder
