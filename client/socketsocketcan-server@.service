@@ -7,7 +7,7 @@ Wants=network-online.target
 User=pi
 Environment=PATH_SOCKETSOCKETCAN_CLIENT_DIR=/home/pi/socketsocketcan/client
 ExecStartPre=/usr/bin/make -C $PATH_SOCKETSOCKETCAN_CLIENT_DIR -B CAN_FORWARDER_MODE=1 CLIENT_MODE=0
-ExecStart=/bin/sh -c '$$PATH_SOCKETSOCKETCAN_CLIENT_DIR/server %I'
+ExecStart=/bin/sh -c '$$PATH_SOCKETSOCKETCAN_CLIENT_DIR/server_forwarder %I'
 Restart=always
 RestartSec=1
 TimeoutStopSec=2
