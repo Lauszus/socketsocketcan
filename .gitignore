@@ -124,4 +124,6 @@ dmypy.json
 
 # Executables
 client/client
+client/client_forwarder
 client/server
+client/server_forwarder
