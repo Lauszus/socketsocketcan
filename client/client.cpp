@@ -331,10 +331,10 @@ int open_can_socket(const char *can_interface_name, const struct can_filter *p_f
         error("ERROR setting loopback", errno);
     }
 
-    // Enable 1s timeout, so the thread is not blocking
+    // Enable 1ms timeout, so the thread is not blocking
     struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = 1000;
     if (setsockopt(soc, SOL_SOCKET, SO_RCVTIMEO, (const uint8_t*)&tv, sizeof(tv)) < 0)
     {
         error("ERROR setting timeout", errno);
@@ -424,13 +424,6 @@ void* read_poll_can(void* args)
 
     while (poll)
     {
-        if (count > (BUF_SZ - frame_sz))
-        {
-            //full buffer, drop data and start over. TODO: ring buffer, print/debug
-            bufpnt = read_buf_can;
-            count = 0;
-        }
-
 #if CAN_FORWARDER_MODE
         int num_bytes_can = read_frame(fd, &frame);
 #else
@@ -441,103 +434,121 @@ void* read_poll_can(void* args)
             // This happens when there is a timeout, we simply keep looping, as we want do not want to block while
             // reading the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
             // on the bus
-            continue;
+        }
+        else if (num_bytes_can < -1)
+        {
+            pthread_error("Unexpected return value from read_frame... exiting", 0);
         }
         else if (num_bytes_can == 0)
         {
             // This will happen when we shut down the client, so report an success
             pthread_error("Socket closed at other end... exiting", 0);
         }
-
-#if DEBUG
-        printf("read %d number of bytes\n", num_bytes_can);
-        print_frame(&frame);
-#endif
-
-        if (use_unordered_map)
-        {
-#if CAN_FORWARDER_MODE
-            hash_map[frame.can_id] = frame;
-#else
-            tf.tv_sec = tv.tv_sec;
-            tf.tv_usec = tv.tv_usec;
-            tf.id = frame.can_id;
-            tf.dlc = frame.can_dlc;
-            memcpy(tf.data, frame.data, sizeof(frame.data));
-            hash_map[tf.id] = tf;
-#endif
-        }
         else
         {
-#if !CAN_FORWARDER_MODE
-            memcpy(bufpnt, (uint8_t*)&tv, sizeof(struct timeval));
-            bufpnt += sizeof(struct timeval);
-            count += sizeof(struct timeval);
-#endif
-
-            memcpy(bufpnt, (uint8_t*)&frame.can_id, sizeof(uint32_t));
-            bufpnt += sizeof(uint32_t);
-            count += sizeof(uint32_t);
-
-            memcpy(bufpnt, (uint8_t*)&frame.can_dlc,sizeof(uint8_t));
-            bufpnt += sizeof(uint8_t);
-            count += sizeof(uint8_t);
-
-            memcpy(bufpnt, (uint8_t*)&frame.data, sizeof(frame.data));
-            bufpnt += sizeof(frame.data);
-            count += sizeof(frame.data);
-        }
-
 #if DEBUG
-        printf("message read: %zu\n", count);
+            printf("read %d number of bytes\n", num_bytes_can);
+            print_frame(&frame);
 #endif
-        pthread_mutex_lock(&read_mutex);
-        if (tcp_ready_to_send) // other thread has said it is able to write to TCP socket
-        {
+
             if (use_unordered_map)
             {
-                socketcan_bytes_available = hash_map.size() * hash_map_value_size;
-                size_t i = 0;
-                for (const auto &n : hash_map)
-                {
-                    memcpy(read_buf_tcp + i, (uint8_t*)&n.second, hash_map_value_size);
-                    i += hash_map_value_size;
-                }
-
-                tcp_ready_to_send = false;
-                const int signal_rv = pthread_cond_signal(&tcp_send_copied);
-                if (signal_rv < 0)
-                {
-                    pthread_mutex_unlock(&read_mutex);
-                    pthread_error("could not signal to other thread", signal_rv);
-                }
-
-#if DEBUG
-                printf("%zu bytes copied to TCP buffer\n", socketcan_bytes_available);
+#if CAN_FORWARDER_MODE
+                hash_map[frame.can_id] = frame;
+#else
+                tf.tv_sec = tv.tv_sec;
+                tf.tv_usec = tv.tv_usec;
+                tf.id = frame.can_id;
+                tf.dlc = frame.can_dlc;
+                memcpy(tf.data, frame.data, sizeof(frame.data));
+                hash_map[tf.id] = tf;
 #endif
-                hash_map.clear();
+                count = 1;
             }
             else
             {
-                socketcan_bytes_available = count;
-                memcpy(read_buf_tcp, read_buf_can, count);
-
-                tcp_ready_to_send = false;
-                const int signal_rv = pthread_cond_signal(&tcp_send_copied);
-                if (signal_rv < 0)
+                if (count > (BUF_SZ - frame_sz))
                 {
-                    pthread_mutex_unlock(&read_mutex);
-                    pthread_error("could not signal to other thread", signal_rv);
+                    //full buffer, drop data and start over. TODO: ring buffer, print/debug
+                    bufpnt = read_buf_can;
+                    count = 0;
                 }
 
-#if DEBUG
-                printf("%zu bytes copied to TCP buffer.\n", count);
+#if !CAN_FORWARDER_MODE
+                memcpy(bufpnt, (uint8_t*)&tv, sizeof(struct timeval));
+                bufpnt += sizeof(struct timeval);
+                count += sizeof(struct timeval);
 #endif
-                bufpnt = read_buf_can; //start filling up buffer again
-                count = 0;
+
+                memcpy(bufpnt, (uint8_t*)&frame.can_id, sizeof(uint32_t));
+                bufpnt += sizeof(uint32_t);
+                count += sizeof(uint32_t);
+
+                memcpy(bufpnt, (uint8_t*)&frame.can_dlc,sizeof(uint8_t));
+                bufpnt += sizeof(uint8_t);
+                count += sizeof(uint8_t);
+
+                memcpy(bufpnt, (uint8_t*)&frame.data, sizeof(frame.data));
+                bufpnt += sizeof(frame.data);
+                count += sizeof(frame.data);
             }
+
+#if DEBUG
+            printf("message read: %zu\n", count);
+#endif
         }
-        pthread_mutex_unlock(&read_mutex);
+
+        if(count > 0)
+        {
+            pthread_mutex_lock(&read_mutex);
+            if (tcp_ready_to_send) // other thread has said it is able to write to TCP socket
+            {
+                if (use_unordered_map)
+                {
+                    socketcan_bytes_available = hash_map.size() * hash_map_value_size;
+                    size_t i = 0;
+                    for (const auto &n : hash_map)
+                    {
+                        memcpy(read_buf_tcp + i, (uint8_t*)&n.second, hash_map_value_size);
+                        i += hash_map_value_size;
+                    }
+
+                    tcp_ready_to_send = false;
+                    const int signal_rv = pthread_cond_signal(&tcp_send_copied);
+                    if (signal_rv < 0)
+                    {
+                        pthread_mutex_unlock(&read_mutex);
+                        pthread_error("could not signal to other thread", signal_rv);
+                    }
+
+#if DEBUG
+                    printf("%zu bytes copied to TCP buffer\n", socketcan_bytes_available);
+#endif
+                    hash_map.clear();
+                    count = 0;
+                }
+                else
+                {
+                    socketcan_bytes_available = count;
+                    memcpy(read_buf_tcp, read_buf_can, count);
+
+                    tcp_ready_to_send = false;
+                    const int signal_rv = pthread_cond_signal(&tcp_send_copied);
+                    if (signal_rv < 0)
+                    {
+                        pthread_mutex_unlock(&read_mutex);
+                        pthread_error("could not signal to other thread", signal_rv);
+                    }
+
+#if DEBUG
+                    printf("%zu bytes copied to TCP buffer.\n", count);
+#endif
+                    bufpnt = read_buf_can; //start filling up buffer again
+                    count = 0;
+                }
+            }
+            pthread_mutex_unlock(&read_mutex);
+        }
     }
 
     // Make sure the 'read_poll_tcp' thread is unblocked
