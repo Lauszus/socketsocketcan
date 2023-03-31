@@ -431,15 +431,12 @@ void* read_poll_can(void* args)
 #else
         int num_bytes_can = read_frame(fd, &frame, count != 0, &tv);
 #endif
-        if (num_bytes_can == -1)
+        if (num_bytes_can < 0)
         {
-            // This happens when there is a timeout, we simply keep looping, as we want do not want to block while
+            // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block while
             // reading the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
             // on the bus
-        }
-        else if (num_bytes_can < -1)
-        {
-            pthread_error("Unexpected return value from read_frame... exiting", 0);
+            // Negative return value other than -1 should not occur according to documentation.
         }
         else if (num_bytes_can == 0)
         {
@@ -450,7 +447,11 @@ void* read_poll_can(void* args)
         {
 #if DEBUG
             printf("read %d number of bytes\n", num_bytes_can);
+#if CAN_FORWARDER_MODE
             print_frame(&frame);
+#else
+            print_frame(&tf);
+#endif
 #endif
 
             if (use_unordered_map)
@@ -667,11 +668,12 @@ void* write_poll(void* args)
     while (poll)
     {
         int num_bytes_tcp = read(socks->tcp_sock, write_buf, BUF_SZ);
-        if (num_bytes_tcp == -1)
+        if (num_bytes_tcp < 0)
         {
-            // This happens when there is a timeout, we simply keep looping, as we want do not want to block while
+            // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block while
             // writing to the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
             // on the bus
+            // Negative return value other than -1 should not occur according to documentation.
             continue;
         }
         else if (num_bytes_tcp == 0)
