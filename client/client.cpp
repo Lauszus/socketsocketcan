@@ -120,9 +120,9 @@ int open_can_socket(const char *port, const struct can_filter *filter, int numfi
 
 // read a single CAN frame and add timestamp
 #if CAN_FORWARDER_MODE
-int read_frame(int soc, struct can_frame* frame);
+int read_frame(int soc, struct can_frame* frame, bool nonblock);
 #else
-int read_frame(int soc, struct can_frame* frame, struct timeval* tv);
+int read_frame(int soc, struct can_frame* frame, bool nonblock, struct timeval* tv);
 #endif
 
 // continually read CAN and add to buffer
@@ -331,10 +331,10 @@ int open_can_socket(const char *can_interface_name, const struct can_filter *p_f
         error("ERROR setting loopback", errno);
     }
 
-    // Enable 1ms timeout, so the thread is not blocking
+    // Enable 1s timeout, so the thread is not blocking
     struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 1000;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
     if (setsockopt(soc, SOL_SOCKET, SO_RCVTIMEO, (const uint8_t*)&tv, sizeof(tv)) < 0)
     {
         error("ERROR setting timeout", errno);
@@ -381,15 +381,15 @@ int open_can_socket(const char *can_interface_name, const struct can_filter *p_f
 }
 
 #if CAN_FORWARDER_MODE
-int read_frame(int soc, struct can_frame* frame)
+int read_frame(int soc, struct can_frame* frame, bool nonblock)
 #else
-int read_frame(int soc, struct can_frame* frame, struct timeval* tv)
+int read_frame(int soc, struct can_frame* frame, bool nonblock, struct timeval* tv)
 #endif
 {
     int bytes;
 
-    //bytes = read(soc, frame, sizeof(*frame));
-    bytes = recv(soc, frame, sizeof(*frame), MSG_DONTWAIT);
+    int options = nonblock ? MSG_DONTWAIT : 0;
+    bytes = recv(soc, frame, sizeof(*frame), options);
     
 #if !CAN_FORWARDER_MODE
     ioctl(soc, SIOCGSTAMP, tv);
@@ -427,9 +427,9 @@ void* read_poll_can(void* args)
     while (poll)
     {
 #if CAN_FORWARDER_MODE
-        int num_bytes_can = read_frame(fd, &frame);
+        int num_bytes_can = read_frame(fd, &frame, count != 0);
 #else
-        int num_bytes_can = read_frame(fd, &frame, &tv);
+        int num_bytes_can = read_frame(fd, &frame, count != 0, &tv);
 #endif
         if (num_bytes_can == -1)
         {
@@ -500,7 +500,7 @@ void* read_poll_can(void* args)
 #endif
         }
 
-        if(count > 0)
+        if (count > 0)
         {
             pthread_mutex_lock(&read_mutex);
             if (tcp_ready_to_send) // other thread has said it is able to write to TCP socket
