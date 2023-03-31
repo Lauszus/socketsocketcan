@@ -388,7 +388,9 @@ int read_frame(int soc, struct can_frame* frame, struct timeval* tv)
 {
     int bytes;
 
-    bytes = read(soc, frame, sizeof(*frame));
+    //bytes = read(soc, frame, sizeof(*frame));
+    bytes = recv(soc, frame, sizeof(*frame), MSG_DONTWAIT);
+    
 #if !CAN_FORWARDER_MODE
     ioctl(soc, SIOCGSTAMP, tv);
 #endif
