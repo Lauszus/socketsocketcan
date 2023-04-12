@@ -433,9 +433,8 @@ void* read_poll_can(void* args)
 #endif
         if (num_bytes_can < 0)
         {
-            // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block while
-            // reading the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
-            // on the bus
+            // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block,
+            // as then we would never be able to shut down the threads if there was no activity on the bus
             // Negative return value other than -1 should not occur according to documentation.
         }
         else if (num_bytes_can == 0)
@@ -670,9 +669,8 @@ void* write_poll(void* args)
         int num_bytes_tcp = read(socks->tcp_sock, write_buf, BUF_SZ);
         if (num_bytes_tcp < 0)
         {
-            // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block while
-            // writing to the CAN-Bus, as then we would never be able to shut down the threads if there was no activity
-            // on the bus
+            // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block,
+            // as then we would never be able to shut down the threads if there was no new data over TCP
             // Negative return value other than -1 should not occur according to documentation.
             continue;
         }
