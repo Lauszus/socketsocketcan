@@ -472,6 +472,7 @@ void* read_poll_can(void* args)
                 if (count > (BUF_SZ - frame_sz))
                 {
                     //full buffer, drop data and start over. TODO: ring buffer, print/debug
+                    fprintf(stderr, "Intermediate TCP-CAN buffer overflow");
                     bufpnt = read_buf_can;
                     count = 0;
                 }
