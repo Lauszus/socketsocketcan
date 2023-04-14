@@ -150,7 +150,7 @@ void print_frame(const timestamped_frame* tf);
 
 /* GLOBALS */
 pthread_mutex_t read_mutex = PTHREAD_MUTEX_INITIALIZER;
-sig_atomic_t poll = true; // for "infinite loops" in threads.
+sig_atomic_t continue_running = true; // for "infinite loops" in threads.
 bool tcp_ready_to_send = true; // only access inside of mutex
 size_t socketcan_bytes_available = 0;// only access inside of mutex
 
@@ -163,19 +163,19 @@ uint8_t read_buf_tcp[BUF_SZ]; // where serialized CAN frames are copied to and s
 void handle_signal(int signal)
 {
     (void)signal;
-    poll = false;
+    continue_running = false;
 }
 
 void error(const char* msg, int error_code)
 {
-    poll = false;
+    continue_running = false;
     perror(msg);
     exit(error_code);
 }
 
 void pthread_error(const char* msg, int error_code)
 {
-    poll = false;
+    continue_running = false;
     fprintf(stderr, "%s: %d\n", msg, error_code);
     pthread_exit(&error_code);
 }
@@ -285,7 +285,7 @@ int create_tcp_socket(const char* hostname, int port)
 
     // TODO: Remove this ugly hack
 retry:
-    if (!poll)
+    if (!continue_running)
     {
         return -1;
     }
@@ -424,7 +424,7 @@ void* read_poll_can(void* args)
     size_t count = 0;
     uint8_t* bufpnt = read_buf_can;
 
-    while (poll)
+    while (continue_running)
     {
 #if CAN_FORWARDER_MODE
         int num_bytes_can = read_frame(fd, &frame, count != 0);
@@ -577,16 +577,16 @@ void* read_poll_tcp(void* args)
 
     size_t cpy_socketcan_bytes_available;
     int wait_rv = 0;
-    while (poll)
+    while (continue_running)
     {
         pthread_mutex_lock(&read_mutex);
         tcp_ready_to_send = true;
         while (!socketcan_bytes_available)
         {
             wait_rv = pthread_cond_wait(&tcp_send_copied, &read_mutex);
-            if (!poll)
+            if (!continue_running)
             {
-                // Break out if the poll flag has gone low
+                // Break out if the continue_running flag has gone low
                 socketcan_bytes_available = 0; // We do not care about the data, as we are about to exit
                 break;
             }
@@ -665,7 +665,7 @@ void* write_poll(void* args)
     const size_t can_struct_sz = sizeof(struct can_frame);
     const size_t frame_sz = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(frame.data);
 
-    while (poll)
+    while (continue_running)
     {
         int num_bytes_tcp = read(socks->tcp_sock, write_buf, BUF_SZ);
         if (num_bytes_tcp < 0)
@@ -855,7 +855,7 @@ int tcpclient(const char *can_interface_name, const char *hostname, int port, co
 #endif
         tcp_socket = create_tcp_socket(hostname, port);
         sleep(1);
-    } while (poll && tcp_socket == -1);
+    } while (continue_running && tcp_socket == -1);
 #if DEBUG
     if (tcp_socket != -1)
     {
