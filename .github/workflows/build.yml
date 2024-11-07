@@ -13,16 +13,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build ${{ matrix.docker_images }} wheel
+      id: build
       run: |
         docker build -f Dockerfile.armv7l -t lauszus/socketsocketcan --build-arg APP_IMAGE="${{ matrix.docker_images }}" .
         docker cp "$(docker create lauszus/socketsocketcan)":/socketsocketcan-wheel .
         mkdir dist
         cp socketsocketcan-wheel/socketsocketcan*.whl dist/
+
+        # Special characters are not allowed, so just use the Debian codename for the artifact name
+        name=$(echo -n "${{ matrix.docker_images }}" | cut -d ':' -f2)
+        echo "name=$name" >> "$GITHUB_OUTPUT"
     - name: Upload wheel as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: socketsocketcan-${{ github.sha }}
+        name: socketsocketcan-armv7l-${{ steps.build.outputs.name }}-${{ github.sha }}
         path: dist
+        retention-days: 1
+        if-no-files-found: error
   amd64:
     name: Build amd64 wheels
     runs-on: ubuntu-24.04
@@ -52,8 +59,10 @@ jobs:
     - name: Upload wheel as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: socketsocketcan-${{ github.sha }}
+        name: socketsocketcan-x86-${{ matrix.python-version }}-${{ github.sha }}
         path: dist
+        retention-days: 1
+        if-no-files-found: error
   sdist:
     name: Build sdist
     runs-on: ubuntu-24.04
@@ -71,8 +80,10 @@ jobs:
     - name: Upload sdist as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: socketsocketcan-${{ github.sha }}
+        name: socketsocketcan-sdist-3.10-${{ github.sha }}
         path: dist
+        retention-days: 1
+        if-no-files-found: error
   release:
     needs: [armv7l, amd64, sdist]
     name: Release
@@ -85,8 +96,9 @@ jobs:
         python-version: '3.10'
     - uses: actions/download-artifact@v4
       with:
-        name: socketsocketcan-${{ github.sha }}
+        pattern: socketsocketcan-*-*-${{ github.sha }}
         path: socketsocketcan
+        merge-multiple: true
     - name: Publish to private PyPI server
       if: startsWith(github.ref, 'refs/tags/')
       run: |
