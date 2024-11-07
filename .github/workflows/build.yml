@@ -32,7 +32,7 @@ jobs:
         if-no-files-found: error
   amd64:
     name: Build amd64 wheels
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-20.04
     timeout-minutes: 5
     strategy:
       matrix:
