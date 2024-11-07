@@ -9,6 +9,7 @@ RUN [ "cross-build-start" ]
 RUN apt-get -y update
 RUN apt-get -y install apt-utils
 RUN apt-get -y install build-essential python3-dev python3-pip
+RUN rm /usr/lib/python3.*/EXTERNALLY-MANAGED || true
 RUN python3 -m pip install --extra-index-url=https://www.piwheels.org/simple -U pip setuptools wheel pybind11
 
 # Build the wheel.
