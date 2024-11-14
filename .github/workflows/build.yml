@@ -9,24 +9,22 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        docker_images: ['balenalib/armv7hf-debian:buster', 'balenalib/armv7hf-debian:bullseye', 'balenalib/armv7hf-debian:bookworm']
+        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
     steps:
     - uses: actions/checkout@v4
     - name: Build ${{ matrix.docker_images }} wheel
       id: build
       run: |
-        docker build -f Dockerfile.armv7l -t lauszus/socketsocketcan --build-arg APP_IMAGE="${{ matrix.docker_images }}" .
+        docker build -f Dockerfile.armv7l -t lauszus/socketsocketcan --build-arg PYTHON_VERSION="${{ matrix.python-version }}" .
         docker cp "$(docker create lauszus/socketsocketcan)":/socketsocketcan-wheel .
+
+        # Copy over the wheel.
         mkdir dist
         cp socketsocketcan-wheel/socketsocketcan*.whl dist/
-
-        # Special characters are not allowed, so just use the Debian codename for the artifact name
-        name=$(echo -n "${{ matrix.docker_images }}" | cut -d ':' -f2)
-        echo "name=$name" >> "$GITHUB_OUTPUT"
     - name: Upload wheel as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: socketsocketcan-armv7l-${{ steps.build.outputs.name }}-${{ github.sha }}
+        name: socketsocketcan-armv7l-${{ matrix.python-version }}-${{ github.sha }}
         path: dist
         retention-days: 1
         if-no-files-found: error
@@ -43,8 +41,6 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: pip3 install -U pip setuptools wheel pybind11
     - name: Build amd64 ${{ matrix.python-version }} wheel
       run: pip3 -v wheel --wheel-dir=socketsocketcan-wheel .
     - name: Run amd64 ${{ matrix.python-version }} wheel
