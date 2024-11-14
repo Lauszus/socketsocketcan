@@ -7,7 +7,7 @@ COPY . /socketsocketcan
 RUN [ "cross-build-start" ]
 
 # Build the wheel.
-RUN python3 -m pip -v wheel --wheel-dir=/socketsocketcan-wheel /socketsocketcan
+RUN python3 -m pip -v wheel --extra-index-url=https://www.piwheels.org/simple --wheel-dir=/socketsocketcan-wheel /socketsocketcan
 
 # Make sure the wheel is working.
 RUN python3 -m pip install --no-index --find-links=/socketsocketcan-wheel socketsocketcan
