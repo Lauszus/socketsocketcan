@@ -5,7 +5,7 @@ on: [push, pull_request]
 jobs:
   armv7l:
     name: Build armv7l wheels
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       matrix:
@@ -30,7 +30,8 @@ jobs:
         if-no-files-found: error
   amd64:
     name: Build amd64 wheels
-    runs-on: ubuntu-20.04
+    # Use the earliest LTS Ubuntu supported by GitHub Actions.
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     strategy:
       matrix:
@@ -61,7 +62,7 @@ jobs:
         if-no-files-found: error
   sdist:
     name: Build sdist
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
@@ -83,7 +84,7 @@ jobs:
   release:
     needs: [armv7l, amd64, sdist]
     name: Release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
     - name: Set up Python 3.10
