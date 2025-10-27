@@ -22,7 +22,7 @@ jobs:
         mkdir dist
         cp socketsocketcan-wheel/socketsocketcan*.whl dist/
     - name: Upload wheel as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: socketsocketcan-armv7l-${{ matrix.python-version }}-${{ github.sha }}
         path: dist
@@ -54,7 +54,7 @@ jobs:
         mkdir dist
         cp socketsocketcan-wheel/socketsocketcan*.whl dist/
     - name: Upload wheel as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: socketsocketcan-x86-${{ matrix.python-version }}-${{ github.sha }}
         path: dist
@@ -75,7 +75,7 @@ jobs:
     - name: Build sdist
       run: python3 setup.py sdist --formats=gztar,zip
     - name: Upload sdist as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: socketsocketcan-sdist-3.10-${{ github.sha }}
         path: dist
@@ -91,7 +91,7 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: '3.10'
-    - uses: actions/download-artifact@v5
+    - uses: actions/download-artifact@v6
       with:
         pattern: socketsocketcan-*-*-${{ github.sha }}
         path: socketsocketcan
