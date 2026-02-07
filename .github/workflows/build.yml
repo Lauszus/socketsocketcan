@@ -3,116 +3,107 @@ name: socketsocketcan CI
 on: [push, pull_request]
 
 jobs:
-  armv7l:
-    name: Build armv7l wheels
-    runs-on: ubuntu-latest
+  wheels:
+    name: Build ${{ matrix.cibw_archs }} wheels
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      CIBW_BUILD_VERBOSITY_LINUX: 3
+      CIBW_BUILD:  ${{ matrix.cibw_build }}
+      CIBW_ARCHS: ${{ matrix.cibw_archs }}
     strategy:
       matrix:
-        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
+        include:
+          - os: ubuntu-latest
+            cibw_archs: x86_64
+            cibw_build: 'cp38-manylinux_x86_64 cp39-manylinux_x86_64 cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64'
+          - os: ubuntu-24.04-arm
+            cibw_archs: aarch64
+            cibw_build: 'cp38-manylinux_aarch64 cp39-manylinux_aarch64 cp310-manylinux_aarch64 cp311-manylinux_aarch64 cp312-manylinux_aarch64 cp313-manylinux_aarch64 cp314-manylinux_aarch64'
+          - os: ubuntu-24.04-arm
+            cibw_archs: armv7l
+            cibw_build: 'cp38-manylinux_armv7l cp39-manylinux_armv7l cp310-manylinux_armv7l cp311-manylinux_armv7l cp312-manylinux_armv7l cp313-manylinux_armv7l cp314-manylinux_armv7l'
     steps:
     - uses: actions/checkout@v6
-    - name: Build ${{ matrix.docker_images }} wheel
-      id: build
-      run: |
-        docker build -f Dockerfile.armv7l -t lauszus/socketsocketcan --build-arg PYTHON_VERSION="${{ matrix.python-version }}" .
-        docker cp "$(docker create lauszus/socketsocketcan)":/socketsocketcan-wheel .
-
-        # Copy over the wheel.
-        mkdir dist
-        cp socketsocketcan-wheel/socketsocketcan*.whl dist/
-    - name: Upload wheel as artifact
-      uses: actions/upload-artifact@v6
       with:
-        name: socketsocketcan-armv7l-${{ matrix.python-version }}-${{ github.sha }}
-        path: dist
-        retention-days: 1
-        if-no-files-found: error
-  amd64:
-    name: Build amd64 wheels
-    # Use the earliest LTS Ubuntu supported by GitHub Actions.
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    strategy:
-      matrix:
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
-    steps:
-    - uses: actions/checkout@v6
-    - name: Set up Python ${{ matrix.python-version }}
+        persist-credentials: false
+
+    - name: Set up Python
       uses: actions/setup-python@v6
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Build amd64 ${{ matrix.python-version }} wheel
-      run: pip3 -v wheel --wheel-dir=socketsocketcan-wheel .
-    - name: Run amd64 ${{ matrix.python-version }} wheel
-      run: |
-        # Make sure the wheel is working.
-        pip3 install --no-index --find-links=socketsocketcan-wheel socketsocketcan
-        python3 -c "import socketsocketcan; print(dir(socketsocketcan))"
 
-        # Copy over the wheel.
-        mkdir dist
-        cp socketsocketcan-wheel/socketsocketcan*.whl dist/
-    - name: Upload wheel as artifact
-      uses: actions/upload-artifact@v6
+    - name: Install cibuildwheel
+      run: python -m pip install cibuildwheel==3.3.1
+
+    - name: Build wheels
+      run: python -m cibuildwheel --output-dir wheelhouse
+
+    - uses: actions/upload-artifact@v6
       with:
-        name: socketsocketcan-x86-${{ matrix.python-version }}-${{ github.sha }}
-        path: dist
+        name: socketsocketcan-${{ matrix.cibw_archs }}-${{ github.sha }}
+        path: ./wheelhouse/*.whl
         retention-days: 1
         if-no-files-found: error
+
   sdist:
     name: Build sdist
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@v6
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v6
       with:
-        python-version: '3.10'
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+
     - name: Install dependencies
       run: pip3 install -U pip setuptools wheel pybind11
+
     - name: Build sdist
       run: python3 setup.py sdist --formats=gztar,zip
+
     - name: Upload sdist as artifact
       uses: actions/upload-artifact@v6
       with:
-        name: socketsocketcan-sdist-3.10-${{ github.sha }}
+        name: socketsocketcan-sdist-${{ github.sha }}
         path: dist
         retention-days: 1
         if-no-files-found: error
+
   release:
-    needs: [armv7l, amd64, sdist]
+    needs: [wheels, sdist]
     name: Release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - name: Set up Python 3.10
+    - name: Set up Python
       uses: actions/setup-python@v6
-      with:
-        python-version: '3.10'
+
     - uses: actions/download-artifact@v7
       with:
-        pattern: socketsocketcan-*-*-${{ github.sha }}
+        pattern: socketsocketcan-*-${{ github.sha }}
         path: socketsocketcan
         merge-multiple: true
+
     - name: Publish to private PyPI server
+      id: pypi
       if: startsWith(github.ref, 'refs/tags/')
       run: |
         pip3 install -U pip setuptools wheel
         pip3 install -U twine
         twine upload --repository-url ${{ secrets.PYPI_URL }} -u ${{ secrets.PYPI_USERNAME }} -p ${{ secrets.PYPI_PASSWORD }} socketsocketcan/*
+
     - name: Calculate checksums
       run: |
         pushd socketsocketcan
-        sha256sum * > SHA256SUMS
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
         popd
+
     - name: Publish to Github Release
       uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
+      if: ${{ steps.pypi.conclusion == 'success' }}
       with:
         files: socketsocketcan/*
         draft: true
         fail_on_unmatched_files: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
