@@ -2,6 +2,12 @@ name: socketsocketcan CI
 
 on: [push, pull_request]
 
+# Ensure that the workflow is only triggered once per PR, subsequent pushes to the PR will cancel and restart the workflow.
+# See https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   wheels:
     name: Build ${{ matrix.cibw_archs }} wheels
@@ -9,20 +15,14 @@ jobs:
     timeout-minutes: 15
     env:
       CIBW_BUILD_VERBOSITY_LINUX: 3
-      CIBW_BUILD:  ${{ matrix.cibw_build }}
       CIBW_ARCHS: ${{ matrix.cibw_archs }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             cibw_archs: x86_64
-            cibw_build: 'cp38-manylinux_x86_64 cp39-manylinux_x86_64 cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64'
           - os: ubuntu-24.04-arm
-            cibw_archs: aarch64
-            cibw_build: 'cp38-manylinux_aarch64 cp39-manylinux_aarch64 cp310-manylinux_aarch64 cp311-manylinux_aarch64 cp312-manylinux_aarch64 cp313-manylinux_aarch64 cp314-manylinux_aarch64'
-          - os: ubuntu-24.04-arm
-            cibw_archs: armv7l
-            cibw_build: 'cp38-manylinux_armv7l cp39-manylinux_armv7l cp310-manylinux_armv7l cp311-manylinux_armv7l cp312-manylinux_armv7l cp313-manylinux_armv7l cp314-manylinux_armv7l'
+            cibw_archs: armv7l aarch64
     steps:
     - uses: actions/checkout@v6
       with:
@@ -38,7 +38,7 @@ jobs:
 
     - uses: actions/upload-artifact@v6
       with:
-        name: socketsocketcan-${{ matrix.cibw_archs }}-${{ github.sha }}
+        name: socketsocketcan-${{ matrix.os }}-${{ github.sha }}
         path: ./wheelhouse/*.whl
         retention-days: 1
         if-no-files-found: error

@@ -142,10 +142,12 @@ void deserialize_frame(const uint8_t* ptr, timestamped_frame* tf);
 #endif
 
 // print CAN frame into to stdout (for debug)
+#if DEBUG
 #if CAN_FORWARDER_MODE
 void print_frame(const struct can_frame* frame);
 #else
 void print_frame(const timestamped_frame* tf);
+#endif
 #endif
 
 /* GLOBALS */
@@ -772,6 +774,7 @@ void deserialize_frame(const uint8_t* ptr, timestamped_frame* tf)
 #endif
 }
 
+#if DEBUG
 #if CAN_FORWARDER_MODE
 void print_frame(const struct can_frame* frame)
 #else
@@ -810,7 +813,7 @@ void print_frame(const timestamped_frame* tf)
         printf(" %02x", frame->data[n]);
     }
 #else
-    printf("\t%ld.%ld: ID: 0x%x | DLC: %u | Data:", tf->tv_sec, tf->tv_usec,tf->id, tf->dlc);
+    printf("\t%lld.%lld: ID: 0x%x | DLC: %u | Data:", static_cast<long long int>(tf->tv_sec), static_cast<long long int>(tf->tv_usec), tf->id, tf->dlc);
     for (int n=0; n<tf->dlc; n++)
     {
         printf(" %02x", tf->data[n]);
@@ -818,6 +821,7 @@ void print_frame(const timestamped_frame* tf)
 #endif
     printf("\n");
 }
+#endif
 
 int tcpclient(const char *can_interface_name, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, int limit_recv_rate_hz)
 {
