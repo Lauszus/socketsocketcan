@@ -6,4 +6,4 @@ if sys.platform == 'linux':
     from .tcpbus.client import TCPClient
 
 name = 'socketsocketcan'
-__version__ = '0.2.0'
+__version__ = '0.2.1'
