@@ -28,14 +28,13 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
-
-    - name: Install cibuildwheel
-      run: python -m pip install cibuildwheel==3.3.1
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: false
 
     - name: Build wheels
-      run: python -m cibuildwheel --output-dir wheelhouse
+      run: uvx --from cibuildwheel@3.3.1 cibuildwheel --output-dir wheelhouse
 
     - uses: actions/upload-artifact@v6
       with:
@@ -53,14 +52,13 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
-
-    - name: Install dependencies
-      run: pip3 install -U pip setuptools wheel pybind11
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: false
 
     - name: Build sdist
-      run: python3 setup.py sdist --formats=gztar,zip
+      run: uv build --sdist
 
     - name: Upload sdist as artifact
       uses: actions/upload-artifact@v6
@@ -76,22 +74,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - name: Set up Python
-      uses: actions/setup-python@v6
-
     - uses: actions/download-artifact@v7
       with:
         pattern: socketsocketcan-*-${{ github.sha }}
         path: socketsocketcan
         merge-multiple: true
 
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: false
+
+    - name: Check dist
+      id: twine
+      run: uvx twine check socketsocketcan/*
+
     - name: Publish to private PyPI server
       id: pypi
-      if: startsWith(github.ref, 'refs/tags/')
-      run: |
-        pip3 install -U pip setuptools wheel
-        pip3 install -U twine
-        twine upload --repository-url ${{ secrets.PYPI_URL }} -u ${{ secrets.PYPI_USERNAME }} -p ${{ secrets.PYPI_PASSWORD }} socketsocketcan/*
+      if: ${{ steps.twine.conclusion == 'success' && startsWith(github.ref, 'refs/tags/') }}
+      run: uvx twine upload --repository-url ${{ secrets.PYPI_URL }} -u ${{ secrets.PYPI_USERNAME }} -p ${{ secrets.PYPI_PASSWORD }} socketsocketcan/*
 
     - name: Calculate checksums
       run: |
