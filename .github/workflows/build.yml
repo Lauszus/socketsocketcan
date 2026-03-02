@@ -36,7 +36,7 @@ jobs:
     - name: Build wheels
       run: uvx --from cibuildwheel@3.3.1 cibuildwheel --output-dir wheelhouse
 
-    - uses: actions/upload-artifact@v6
+    - uses: actions/upload-artifact@v7
       with:
         name: socketsocketcan-${{ matrix.os }}-${{ github.sha }}
         path: ./wheelhouse/*.whl
@@ -61,7 +61,7 @@ jobs:
       run: uv build --sdist
 
     - name: Upload sdist as artifact
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: socketsocketcan-sdist-${{ github.sha }}
         path: dist
@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - uses: actions/download-artifact@v7
+    - uses: actions/download-artifact@v8
       with:
         pattern: socketsocketcan-*-${{ github.sha }}
         path: socketsocketcan
