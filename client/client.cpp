@@ -468,6 +468,14 @@ void* read_poll_can(void* args)
         }
         else
         {
+#if !CAN_FORWARDER_MODE
+            tf.tv_sec = (uint32_t)tv.tv_sec;
+            tf.tv_usec = (uint32_t)tv.tv_usec;
+            tf.id = frame.can_id;
+            tf.dlc = frame.can_dlc;
+            memcpy(tf.data, frame.data, sizeof(frame.data));
+#endif
+
 #if DEBUG
             printf("read %d number of bytes\n", num_bytes_can);
 #if CAN_FORWARDER_MODE
@@ -475,14 +483,6 @@ void* read_poll_can(void* args)
 #else
             print_frame(&tf);
 #endif
-#endif
-
-#if !CAN_FORWARDER_MODE
-            tf.tv_sec = (uint32_t)tv.tv_sec;
-            tf.tv_usec = (uint32_t)tv.tv_usec;
-            tf.id = frame.can_id;
-            tf.dlc = frame.can_dlc;
-            memcpy(tf.data, frame.data, sizeof(frame.data));
 #endif
 
             if (use_unordered_map)
