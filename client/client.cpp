@@ -237,6 +237,8 @@ int create_tcp_socket(const char* hostname, int port)
     if (connect(client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
 #if WAIT_FOR_TCP_CONNECTION
+        // Close the socket, as a new one is created for every attempt
+        close(client_fd);
         return -1;
 #else
         error("ERROR connecting", errno);
@@ -295,6 +297,7 @@ int create_tcp_socket(const char* hostname, int port)
 retry:
     if (!continue_running)
     {
+        close(server_fd);
         return -1;
     }
 
@@ -306,6 +309,9 @@ retry:
         //error("ERROR accept", errno);
     }
 
+    // Only one client is served, so stop listening
+    close(server_fd);
+
     // Enable 1s timeout, so the thread is not blocking
     tv.tv_sec = 1;
     tv.tv_usec = 0;
@@ -313,8 +319,6 @@ retry:
     {
         error("ERROR setting client timeout", errno);
     }
-
-    // TODO: Close server socket on exit
 #endif
 
     return client_fd;
@@ -902,6 +906,13 @@ int tcpclient(const char *can_interface_name, const char *hostname, int port, co
     tcp_socket = create_tcp_socket(hostname, port);
 #endif
 
+    if (tcp_socket == -1)
+    {
+        // The client was stopped before the TCP connection was established
+        close(can_socket);
+        return 0;
+    }
+
     can_read_args read_args_can = { can_socket, use_unordered_map };
     thread_rv = pthread_create(&read_can_thread, NULL, read_poll_can, (void*)&read_args_can);
     if (thread_rv < 0)
@@ -940,6 +951,9 @@ int tcpclient(const char *can_interface_name, const char *hostname, int port, co
     {
         error("write thread failed", thread_rv);
     }
+
+    close(tcp_socket);
+    close(can_socket);
 
 #if DEBUG
     printf("tcpclient ended\n");
