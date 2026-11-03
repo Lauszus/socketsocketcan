@@ -32,6 +32,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -70,6 +71,9 @@ const int LOOPBACK = RECV_OWN_MSGS;
 #ifndef CAN_FORWARDER_MODE
 #define CAN_FORWARDER_MODE 0
 #endif
+
+// How long to wait for a new CAN-Bus frame while the TCP thread is busy, before checking if it is ready again
+const int TCP_BUSY_POLL_TIMEOUT_MS = 10;
 
 /* DEFINITIONS */
 #if !CAN_FORWARDER_MODE
@@ -428,10 +432,26 @@ void* read_poll_can(void* args)
 
     while (continue_running)
     {
+        // Do not block if there is data waiting to be sent, so it is sent as soon as there is no more data to read
+        const bool nonblock = count != 0;
+        if (nonblock)
+        {
+            pthread_mutex_lock(&read_mutex);
+            const bool ready = tcp_ready_to_send;
+            pthread_mutex_unlock(&read_mutex);
+            if (!ready)
+            {
+                // The TCP thread is busy fx sleeping to limit the receive rate, so wait for the next frame instead
+                // of reading without blocking in a loop, but wake up regularly to check if it is ready again
+                struct pollfd pfd = { fd, POLLIN, 0 };
+                (void)poll(&pfd, 1, TCP_BUSY_POLL_TIMEOUT_MS);
+            }
+        }
+
 #if CAN_FORWARDER_MODE
-        int num_bytes_can = read_frame(fd, &frame, count != 0);
+        int num_bytes_can = read_frame(fd, &frame, nonblock);
 #else
-        int num_bytes_can = read_frame(fd, &frame, count != 0, &tv);
+        int num_bytes_can = read_frame(fd, &frame, nonblock, &tv);
 #endif
         if (num_bytes_can < 0)
         {
