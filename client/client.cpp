@@ -77,10 +77,12 @@ const int TCP_BUSY_POLL_TIMEOUT_MS = 10;
 
 /* DEFINITIONS */
 #if !CAN_FORWARDER_MODE
+// The timestamp is sent as 32-bit values, so the frames have the same size on 32 and 64-bit platforms, which is the
+// size the TCPBus expects
 typedef struct __attribute__((packed, aligned(1)))
 {
-    time_t tv_sec;
-    suseconds_t tv_usec;
+    uint32_t tv_sec;
+    uint32_t tv_usec;
     canid_t id;
     uint8_t dlc;
     uint8_t data[CAN_MAX_DLEN];
@@ -466,6 +468,14 @@ void* read_poll_can(void* args)
         }
         else
         {
+#if !CAN_FORWARDER_MODE
+            tf.tv_sec = (uint32_t)tv.tv_sec;
+            tf.tv_usec = (uint32_t)tv.tv_usec;
+            tf.id = frame.can_id;
+            tf.dlc = frame.can_dlc;
+            memcpy(tf.data, frame.data, sizeof(frame.data));
+#endif
+
 #if DEBUG
             printf("read %d number of bytes\n", num_bytes_can);
 #if CAN_FORWARDER_MODE
@@ -480,11 +490,6 @@ void* read_poll_can(void* args)
 #if CAN_FORWARDER_MODE
                 hash_map[frame.can_id] = frame;
 #else
-                tf.tv_sec = tv.tv_sec;
-                tf.tv_usec = tv.tv_usec;
-                tf.id = frame.can_id;
-                tf.dlc = frame.can_dlc;
-                memcpy(tf.data, frame.data, sizeof(frame.data));
                 hash_map[tf.id] = tf;
 #endif
                 count = 1;
@@ -499,12 +504,7 @@ void* read_poll_can(void* args)
                     count = 0;
                 }
 
-#if !CAN_FORWARDER_MODE
-                memcpy(bufpnt, (uint8_t*)&tv, sizeof(struct timeval));
-                bufpnt += sizeof(struct timeval);
-                count += sizeof(struct timeval);
-#endif
-
+#if CAN_FORWARDER_MODE
                 memcpy(bufpnt, (uint8_t*)&frame.can_id, sizeof(uint32_t));
                 bufpnt += sizeof(uint32_t);
                 count += sizeof(uint32_t);
@@ -516,6 +516,11 @@ void* read_poll_can(void* args)
                 memcpy(bufpnt, (uint8_t*)&frame.data, sizeof(frame.data));
                 bufpnt += sizeof(frame.data);
                 count += sizeof(frame.data);
+#else
+                memcpy(bufpnt, (uint8_t*)&tf, sizeof(tf));
+                bufpnt += sizeof(tf);
+                count += sizeof(tf);
+#endif
             }
 
 #if DEBUG
@@ -778,11 +783,11 @@ void deserialize_frame(const uint8_t* ptr, timestamped_frame* tf)
     memcpy(frame->data, ptr + count, frame->can_dlc);
 #else
     // tf = (timestamped_frame*)ptr; // doesn't work, struct does some padding. manually populate fields?
-    memcpy(&tf->tv_sec, ptr, sizeof(time_t));
-    count += sizeof(time_t);
+    memcpy(&tf->tv_sec, ptr, sizeof(tf->tv_sec));
+    count += sizeof(tf->tv_sec);
 
-    memcpy(&tf->tv_usec, ptr + count, sizeof(suseconds_t));
-    count += sizeof(suseconds_t);
+    memcpy(&tf->tv_usec, ptr + count, sizeof(tf->tv_usec));
+    count += sizeof(tf->tv_usec);
 
     memcpy(&tf->id, ptr + count, sizeof(canid_t));
     count+= sizeof(canid_t);
