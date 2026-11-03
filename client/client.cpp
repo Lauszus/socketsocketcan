@@ -122,7 +122,7 @@ void pthread_error(const char* msg, int error_code);
 int create_tcp_socket(const char* hostname, int port);
 
 // open a CAN socket
-int open_can_socket(const char *port, const struct can_filter *filter, int numfilter);
+int open_can_socket(const char *port, const struct can_filter *filter, int numfilter, bool ignore_rx_error_frames);
 
 // read a single CAN frame and add timestamp
 #if CAN_FORWARDER_MODE
@@ -320,7 +320,7 @@ retry:
     return client_fd;
 }
 
-int open_can_socket(const char *can_interface_name, const struct can_filter *p_filter, int numfilter)
+int open_can_socket(const char *can_interface_name, const struct can_filter *p_filter, int numfilter, bool ignore_rx_error_frames)
 {
     struct ifreq ifr;
     struct sockaddr_can addr;
@@ -348,10 +348,13 @@ int open_can_socket(const char *can_interface_name, const struct can_filter *p_f
         error("ERROR setting timeout", errno);
     }
 
-    const int ERR_MASK = CAN_ERR_MASK; // Enable error frames
-    if (setsockopt(soc, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &ERR_MASK, sizeof(ERR_MASK)) < 0)
+    if (!ignore_rx_error_frames)
     {
-        error("ERROR enabling error frames", errno);
+        const int ERR_MASK = CAN_ERR_MASK; // Enable error frames
+        if (setsockopt(soc, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &ERR_MASK, sizeof(ERR_MASK)) < 0)
+        {
+            error("ERROR enabling error frames", errno);
+        }
     }
 
     if (numfilter > 0)
@@ -848,7 +851,7 @@ void print_frame(const timestamped_frame* tf)
 }
 #endif
 
-int tcpclient(const char *can_interface_name, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, int limit_recv_rate_hz)
+int tcpclient(const char *can_interface_name, const char *hostname, int port, const struct can_filter *filter, int numfilter, bool use_unordered_map, int limit_recv_rate_hz, bool ignore_rx_error_frames)
 {
 #if DEBUG
     printf("tcpclient started\n");
@@ -867,7 +870,7 @@ int tcpclient(const char *can_interface_name, const char *hostname, int port, co
         error("mutex init has failed", thread_rv);
     }
 
-    can_socket = open_can_socket(can_interface_name, filter, numfilter);
+    can_socket = open_can_socket(can_interface_name, filter, numfilter, ignore_rx_error_frames);
     if (can_socket < 0)
     {
         error("unable to create read can thread", can_socket);
@@ -958,5 +961,5 @@ int main(int argc, char* argv[])
     char *hostname = argv[2];
     int port = atoi(argv[3]);
 
-    return tcpclient(can_interface_name, hostname, port, NULL, 0, false, -1);
+    return tcpclient(can_interface_name, hostname, port, NULL, 0, false, -1, false);
 }

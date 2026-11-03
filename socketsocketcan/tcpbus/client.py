@@ -10,7 +10,7 @@ from tcpclient import tcpclient
 class TCPClient(object):
 
     def __init__(self, channel: str, hostname: str, port: int, can_filters: List[Dict[str, Union[int, bool]]] = None,
-                 use_unordered_map=False, limit_recv_rate_hz: int = None):
+                 use_unordered_map=False, limit_recv_rate_hz: int = None, ignore_rx_error_frames=False):
         """
         :param channel: Can interface to use.
         :param hostname: Hostname used for the socket.
@@ -20,6 +20,8 @@ class TCPClient(object):
         to read it yet. This can be used together with "limit_recv_rate_hz" to limit the update rate while still
         receiving the latest data.
         :param limit_recv_rate_hz: Allow to limit the receive update rate.
+        :param ignore_rx_error_frames: Do not receive error frames. This avoids waking up the client for every error
+        frame on a busy bus when only a few IDs are of interest.
         """
         self.channel = channel
         self.hostname = hostname
@@ -27,12 +29,14 @@ class TCPClient(object):
         self.can_filters = can_filters
         self.use_unordered_map = use_unordered_map
         self.limit_recv_rate_hz = limit_recv_rate_hz
+        self.ignore_rx_error_frames = ignore_rx_error_frames
 
         # Run the client in a separate process, so it does not block the main thread
         self._tcp_client_process = multiprocessing.Process(target=self._tcp_client, args=(channel, hostname, port,
                                                                                           can_filters,
                                                                                           use_unordered_map,
-                                                                                          limit_recv_rate_hz))
+                                                                                          limit_recv_rate_hz,
+                                                                                          ignore_rx_error_frames))
         self._tcp_client_process.daemon = True
         self._tcp_client_process.start()
 
@@ -66,7 +70,8 @@ class TCPClient(object):
         return process.wait(timeout)
 
     @staticmethod
-    def _tcp_client(channel, hostname, port, can_filters, use_unordered_map, limit_recv_rate_hz):
+    def _tcp_client(channel, hostname, port, can_filters, use_unordered_map, limit_recv_rate_hz,
+                    ignore_rx_error_frames):
         if can_filters is None:
             can_filters = [{'can_id': 0, 'can_mask': 0}]
 
@@ -82,4 +87,4 @@ class TCPClient(object):
                     can_id |= CAN_EFF_FLAG
             filter_data.append({'can_id': can_id, 'can_mask': can_mask})
 
-        tcpclient(channel, hostname, port, filter_data, use_unordered_map, limit_recv_rate_hz)
+        tcpclient(channel, hostname, port, filter_data, use_unordered_map, limit_recv_rate_hz, ignore_rx_error_frames)
