@@ -52,6 +52,8 @@ As the quotes above impied, calling `send()` doesn't actually send the message. 
 
 The client has a similar structure: there is one thread to poll the CAN bus for new messages and put them in a buffer, a second thread to copy from that buffer to the TCP socket, and a third to read from the TCP socket and send the messages via the CAN Bus.
 
+The client applies the filters on its CAN socket, so frames that are not needed are never sent over TCP. They can be changed while the bus is running with `bus.set_filters([...])`, which sends them to the client. Frames the client has already sent before it applies the new filters are still received.
+
 ## Client
 
 `./client CANCHANNEL HOSTNAME PORT`

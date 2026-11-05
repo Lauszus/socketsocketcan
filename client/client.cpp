@@ -46,6 +46,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <vector>
 
 #define BUF_SZ 100000
 
@@ -74,6 +75,18 @@ const int LOOPBACK = RECV_OWN_MSGS;
 
 // How long to wait for a new CAN-Bus frame while the TCP thread is busy, before checking if it is ready again
 const int TCP_BUSY_POLL_TIMEOUT_MS = 10;
+
+// The server sends frames as a uint32_t ID, a uint8_t DLC and 8 data bytes. A DLC larger than CAN_MAX_DLEN can not be a
+// CAN frame, so these values are used for control messages from the server instead
+// Sets the filters on the CAN socket. The ID is the number of CONTROL_FILTER messages that follow
+const uint8_t CONTROL_SET_FILTERS = 0xF0;
+// One filter: the ID is the filter ID and the first 4 data bytes are the filter mask in little-endian
+const uint8_t CONTROL_FILTER = 0xF1;
+
+// Older kernel headers do not define the maximum number of filters on a CAN socket
+#ifndef CAN_RAW_FILTER_MAX
+#define CAN_RAW_FILTER_MAX 512
+#endif
 
 /* DEFINITIONS */
 #if !CAN_FORWARDER_MODE
@@ -695,13 +708,20 @@ void* write_poll(void* args)
     struct can_frame frame;
 
     uint8_t write_buf[BUF_SZ];
-    uint8_t* bufpnt = write_buf;
     const size_t can_struct_sz = sizeof(struct can_frame);
     const size_t frame_sz = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(frame.data);
 
+    // A read from the TCP socket can end in the middle of a frame, so the remainder is kept until the next read
+    size_t num_bytes_buffered = 0;
+
+    // The filters are applied once all the filters sent by the server have been received
+    std::vector<struct can_filter> filters;
+    size_t num_filters_expected = 0;
+    bool filters_rejected = false;
+
     while (continue_running)
     {
-        int num_bytes_tcp = read(socks->tcp_sock, write_buf, BUF_SZ);
+        int num_bytes_tcp = read(socks->tcp_sock, write_buf + num_bytes_buffered, BUF_SZ - num_bytes_buffered);
         if (num_bytes_tcp < 0)
         {
             // Return value of -1 happens when there is a timeout, we simply keep looping, as we want do not want to block,
@@ -714,29 +734,84 @@ void* write_poll(void* args)
             // This will happen when we shut down the client, so report an success
             pthread_error("Socket closed at other end... exiting", 0);
         }
+        num_bytes_buffered += num_bytes_tcp;
 
-        int num_frames = num_bytes_tcp / frame_sz;
 #if DEBUG
-        printf("%d bytes read from TCP. Number of frames: %d\n", num_bytes_tcp, num_frames);
+        printf("%d bytes read from TCP. Number of frames: %zu\n", num_bytes_tcp, num_bytes_buffered / frame_sz);
 #endif
-        size_t frame_remainder = num_bytes_tcp % frame_sz;
-        if (frame_remainder != 0)
-        {
-            fprintf(stderr, "Frames got corrupted, as remainder is not 0: %zu\n", frame_remainder);
-            continue;
-        }
 
-        for (int n = 0; n < num_frames; n++)
+        const uint8_t* bufpnt = write_buf;
+        for (; num_bytes_buffered >= frame_sz; num_bytes_buffered -= frame_sz, bufpnt += frame_sz)
         {
-            frame.can_id = ((uint32_t)bufpnt[0]) | ((uint32_t)bufpnt[1] << 8) | ((uint32_t)bufpnt[2] << 16) | ((uint32_t)bufpnt[3] << 24);
-            frame.can_dlc = (uint8_t)bufpnt[4];
+            const uint32_t can_id = ((uint32_t)bufpnt[0]) | ((uint32_t)bufpnt[1] << 8) | ((uint32_t)bufpnt[2] << 16) | ((uint32_t)bufpnt[3] << 24);
+            const uint8_t dlc = bufpnt[4];
+
+            if (dlc == CONTROL_SET_FILTERS)
+            {
+                filters.clear();
+                filters_rejected = can_id > CAN_RAW_FILTER_MAX;
+                if (filters_rejected)
+                {
+                    // The kernel would reject them, so ignore the filters that follow and keep the current ones
+                    fprintf(stderr, "Ignoring %u CAN filters, as at most %d are supported\n", can_id, CAN_RAW_FILTER_MAX);
+                    num_filters_expected = 0;
+                    continue;
+                }
+                num_filters_expected = can_id;
+                if (num_filters_expected == 0)
+                {
+                    // No filters means that no frames are received
+                    if (setsockopt(socks->can_sock, SOL_CAN_RAW, CAN_RAW_FILTER, NULL, 0) < 0)
+                    {
+                        perror("ERROR setting the CAN filters");
+                    }
+                }
+                continue;
+            }
+            else if (dlc == CONTROL_FILTER)
+            {
+                if (filters.size() >= num_filters_expected)
+                {
+                    if (!filters_rejected)
+                    {
+                        fprintf(stderr, "Ignoring a CAN filter that was not announced\n");
+                    }
+                    continue;
+                }
+
+                struct can_filter filter;
+                filter.can_id = can_id;
+                filter.can_mask = ((uint32_t)bufpnt[5]) | ((uint32_t)bufpnt[6] << 8) | ((uint32_t)bufpnt[7] << 16) | ((uint32_t)bufpnt[8] << 24);
+                filters.push_back(filter);
+                if (filters.size() == num_filters_expected)
+                {
+                    // The kernel swaps the filters atomically, so this is safe while the other thread is reading
+                    if (setsockopt(socks->can_sock, SOL_CAN_RAW, CAN_RAW_FILTER, filters.data(),
+                                   filters.size() * sizeof(struct can_filter)) < 0)
+                    {
+                        perror("ERROR setting the CAN filters");
+                    }
+#if DEBUG
+                    printf("Set %zu CAN filters\n", filters.size());
+#endif
+                }
+                continue;
+            }
+            else if (dlc > CAN_MAX_DLEN)
+            {
+                fprintf(stderr, "Ignoring a frame with an invalid DLC: %u\n", dlc);
+                continue;
+            }
+
+            frame.can_id = can_id;
+            frame.can_dlc = dlc;
             memcpy(frame.data, &bufpnt[5], frame.can_dlc);
 
 #if DEBUG
 #if CAN_FORWARDER_MODE
             print_frame(&frame);
 #else
-            printf("frame %d | ID: %x | DLC: %u | Data:", n, frame.can_id, frame.can_dlc);
+            printf("frame | ID: %x | DLC: %u | Data:", frame.can_id, frame.can_dlc);
             for (int m = 0; m < frame.can_dlc; m++)
             {
                 printf(" %02x",frame.data[m]);
@@ -761,9 +836,10 @@ void* write_poll(void* args)
                 fprintf(stderr, "only send %d bytes of can message.\n", num_bytes_can);
                 pthread_error("failed to send complete CAN message!", EXIT_FAILURE);
             }
-            bufpnt += frame_sz;
         }
-        bufpnt = write_buf; //reset.
+
+        // Move the start of an incomplete frame to the beginning of the buffer
+        memmove(write_buf, bufpnt, num_bytes_buffered);
     }
 
 #if DEBUG

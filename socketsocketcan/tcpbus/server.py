@@ -7,9 +7,15 @@ from typing import Dict, Union, List
 import can
 from can.interfaces.socketcan.constants import CAN_ERR_FLAG, CAN_RTR_FLAG, CAN_EFF_FLAG
 
+from .filters import pack_filters
+
 
 class TCPBus(can.BusABC):
     RECV_FRAME_SZ = 21
+
+    # Control messages to the client. They use a DLC larger than 8, as that can not be a CAN frame
+    _CONTROL_SET_FILTERS = 0xF0  # The ID is the number of _CONTROL_FILTER messages that follow
+    _CONTROL_FILTER = 0xF1  # The ID is the filter ID and the data is the filter mask
 
     def __init__(self, port: int, hostname='', can_filters: List[Dict[str, Union[int, bool]]] = None, **kwargs):
         self.channel_info = "tcpbus port: {} hostname: {}".format(port, hostname)
@@ -64,6 +70,21 @@ class TCPBus(can.BusABC):
             msg.arbitration_id |= CAN_ERR_FLAG
         self._send_buffer.put(msg, timeout=timeout)
 
+    def _apply_filters(self, filters):
+        # The constructor of BusABC calls this before the connection is made. The client is started with the same
+        # filters, so there is nothing to send yet
+        if not hasattr(self, '_send_buffer'):
+            return
+
+        # Send the filters to the client, which sets them on its CAN socket. Note that frames which the client has
+        # already sent are still received, as the filtering is only done by the client
+        filter_data = pack_filters(filters)
+        data = self._control_to_bytes(self._CONTROL_SET_FILTERS, len(filter_data))
+        for can_filter in filter_data:
+            data += self._control_to_bytes(self._CONTROL_FILTER, can_filter['can_id'],
+                                           can_filter['can_mask'].to_bytes(4, 'little'))
+        self._send_buffer.put(data)
+
     def _stop_threads(self, timeout):
         self._shutdown_flag.set()
 
@@ -97,6 +118,11 @@ class TCPBus(can.BusABC):
         dlc = msg.dlc.to_bytes(1,"little")
         data = msg.data + bytes(8-msg.dlc)
         return arb_id+dlc+data
+
+    @staticmethod
+    def _control_to_bytes(control, value, data=b''):
+        """convert a control message for the client to bytes to be put on TCP socket"""
+        return value.to_bytes(4, 'little') + control.to_bytes(1, 'little') + data + bytes(8 - len(data))
 
     @staticmethod
     def _bytes_to_message(b):
@@ -172,9 +198,9 @@ class TCPBus(can.BusABC):
         while not shutdown_flag.is_set() and connected_flag.is_set():
             try:
                 msg = send_buffer.get(timeout=0.02)
-                data = TCPBus._msg_to_bytes(msg)
+                data = TCPBus._item_to_bytes(msg)
                 while not send_buffer.empty(): #we know there's one message, might be more.
-                    data += TCPBus._msg_to_bytes(send_buffer.get())
+                    data += TCPBus._item_to_bytes(send_buffer.get())
                 try:
                     connection.sendall(data)
                 except OSError:
@@ -186,3 +212,8 @@ class TCPBus(can.BusABC):
         # Set the flags to signal that the connection has been closed
         shutdown_flag.set()
         connected_flag.clear()
+
+    @staticmethod
+    def _item_to_bytes(item):
+        # Control messages are put in the send buffer as bytes, so they are sent in order with the frames
+        return item if isinstance(item, bytes) else TCPBus._msg_to_bytes(item)
