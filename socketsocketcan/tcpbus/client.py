@@ -32,9 +32,13 @@ class TCPClient(object):
         self.limit_recv_rate_hz = limit_recv_rate_hz
         self.ignore_rx_error_frames = ignore_rx_error_frames
 
+        # Convert the filters before starting the process, so invalid filters raise an error here instead of stopping
+        # the client, which would make the TCPBus wait for a connection forever
+        filter_data = pack_filters(can_filters)
+
         # Run the client in a separate process, so it does not block the main thread
         self._tcp_client_process = multiprocessing.Process(target=self._tcp_client, args=(channel, hostname, port,
-                                                                                          can_filters,
+                                                                                          filter_data,
                                                                                           use_unordered_map,
                                                                                           limit_recv_rate_hz,
                                                                                           ignore_rx_error_frames))
@@ -71,7 +75,6 @@ class TCPClient(object):
         return process.wait(timeout)
 
     @staticmethod
-    def _tcp_client(channel, hostname, port, can_filters, use_unordered_map, limit_recv_rate_hz,
+    def _tcp_client(channel, hostname, port, filter_data, use_unordered_map, limit_recv_rate_hz,
                     ignore_rx_error_frames):
-        tcpclient(channel, hostname, port, pack_filters(can_filters), use_unordered_map, limit_recv_rate_hz,
-                  ignore_rx_error_frames)
+        tcpclient(channel, hostname, port, filter_data, use_unordered_map, limit_recv_rate_hz, ignore_rx_error_frames)
