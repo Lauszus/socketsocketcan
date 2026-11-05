@@ -83,6 +83,11 @@ const uint8_t CONTROL_SET_FILTERS = 0xF0;
 // One filter: the ID is the filter ID and the first 4 data bytes are the filter mask in little-endian
 const uint8_t CONTROL_FILTER = 0xF1;
 
+// Older kernel headers do not define the maximum number of filters on a CAN socket
+#ifndef CAN_RAW_FILTER_MAX
+#define CAN_RAW_FILTER_MAX 512
+#endif
+
 /* DEFINITIONS */
 #if !CAN_FORWARDER_MODE
 // The timestamp is sent as 32-bit values, so the frames have the same size on 32 and 64-bit platforms, which is the
@@ -712,6 +717,7 @@ void* write_poll(void* args)
     // The filters are applied once all the filters sent by the server have been received
     std::vector<struct can_filter> filters;
     size_t num_filters_expected = 0;
+    bool filters_rejected = false;
 
     while (continue_running)
     {
@@ -743,6 +749,14 @@ void* write_poll(void* args)
             if (dlc == CONTROL_SET_FILTERS)
             {
                 filters.clear();
+                filters_rejected = can_id > CAN_RAW_FILTER_MAX;
+                if (filters_rejected)
+                {
+                    // The kernel would reject them, so ignore the filters that follow and keep the current ones
+                    fprintf(stderr, "Ignoring %u CAN filters, as at most %d are supported\n", can_id, CAN_RAW_FILTER_MAX);
+                    num_filters_expected = 0;
+                    continue;
+                }
                 num_filters_expected = can_id;
                 if (num_filters_expected == 0)
                 {
@@ -758,7 +772,10 @@ void* write_poll(void* args)
             {
                 if (filters.size() >= num_filters_expected)
                 {
-                    fprintf(stderr, "Ignoring a CAN filter that was not announced\n");
+                    if (!filters_rejected)
+                    {
+                        fprintf(stderr, "Ignoring a CAN filter that was not announced\n");
+                    }
                     continue;
                 }
 
